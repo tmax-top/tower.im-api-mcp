@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.log
+
+# 令牌文件包含 refresh_token，绝对不能提交
+.tower-token.json
+token.json
