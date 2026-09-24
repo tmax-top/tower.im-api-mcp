@@ -33,6 +33,35 @@ if [ ! -f "$ENTRY" ]; then
   exit 1
 fi
 
+# 从凭证文件加载环境变量。
+#
+# 为什么不放在 MCP 客户端的配置里：WorkBuddy 只认它自己写出的那种条目结构
+# （command 字符串 + args 数组 + type:"stdio"），多写 env 字段有被忽略的风险。
+# 放在这里既保证凭证一定能生效，也让密钥不进入客户端配置。
+#
+# 文件格式：每行 KEY=VALUE，忽略空行与 # 开头的注释。已存在的环境变量优先。
+ENV_FILE="${TOWER_ENV_FILE:-$HOME/.tower-mcp/env}"
+if [ -f "$ENV_FILE" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      '' | '#'*) continue ;;
+    esac
+    key=${line%%=*}
+    value=${line#*=}
+    # 只接受合法变量名，避免把奇怪的内容当命令执行
+    case "$key" in
+      '' | *[!A-Za-z0-9_]*) continue ;;
+    esac
+    case "$key" in
+      [0-9]*) continue ;;
+    esac
+    eval "current=\${$key:-}"
+    if [ -z "$current" ]; then
+      export "$key=$value"
+    fi
+  done <"$ENV_FILE"
+fi
+
 # 依次尝试：PATH 里的 node -> 常见安装位置
 # 注意 macOS 上 GUI 启动的进程常常拿不到用户 shell 的 PATH，所以必须有绝对路径兜底。
 for candidate in \
