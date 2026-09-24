@@ -180,7 +180,6 @@ export function compact<T>(value: T): T {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       if (v === undefined) continue;
-      if (Array.isArray(v) && v.length === 0) continue;
       out[k] = compact(v);
     }
     return out as unknown as T;

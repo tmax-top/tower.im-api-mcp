@@ -125,7 +125,8 @@ test('flattenDocument：没有 data 的文档原样返回', () => {
   assert.equal(flattenDocument(null), null);
 });
 
-test('compact：去掉空数组与 undefined，保留 false 和 0', () => {
+test('compact：去掉 undefined，保留空数组、false 和 0', () => {
   const input = { a: 1, b: [], c: undefined, d: false, e: 0, f: { g: [], h: 'x' } };
-  assert.deepEqual(compact(input), { a: 1, d: false, e: 0, f: { h: 'x' } });
+  // 空数组有语义（如 comments: [] 表示没有评论），必须保留
+  assert.deepEqual(compact(input), { a: 1, b: [], d: false, e: 0, f: { g: [], h: 'x' } });
 });

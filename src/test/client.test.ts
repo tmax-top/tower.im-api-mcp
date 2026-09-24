@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
@@ -176,6 +176,10 @@ test('授权换令牌成功后会把本次使用的 redirect_uri 持久化', asy
     TOWER_TOKEN_FILE: join(tmpdir(), `tower-mcp-test-${process.pid}-exchange.json`),
   } as NodeJS.ProcessEnv);
 
+  // 预先创建一个权限宽松的令牌文件，验证保存时会被强制收紧到 0600
+  writeFileSync(config.tokenFile, '{}', { mode: 0o666 });
+  chmodSync(config.tokenFile, 0o666);
+
   globalThis.fetch = (async () =>
     jsonResponse({ access_token: 'at', refresh_token: 'r1', expires_in: 7200 })) as typeof fetch;
 
@@ -185,6 +189,8 @@ test('授权换令牌成功后会把本次使用的 redirect_uri 持久化', asy
   const stored = JSON.parse(readFileSync(config.tokenFile, 'utf8')) as Record<string, unknown>;
   assert.equal(stored.redirectUri, 'http://localhost:3000/callback');
   assert.equal(stored.accessToken, 'at');
+  // 令牌文件必须始终仅所有者可读写
+  assert.equal(statSync(config.tokenFile).mode & 0o777, 0o600);
 });
 
 test('只配了 refresh_token 时，首次请求会先换取 access_token', async () => {

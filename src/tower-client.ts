@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { loadConfig, type TowerConfig } from './config.js';
 
@@ -139,6 +139,8 @@ export class TowerClient {
         ),
         { mode: 0o600 },
       );
+      // mode 只在新建文件时生效；令牌文件若已存在且权限宽松，这里强制收紧
+      chmodSync(this.config.tokenFile, 0o600);
     } catch (err) {
       // 写不进去不影响本次运行，只是下次要重新授权
       process.stderr.write(`[tower-mcp] 令牌写入失败: ${(err as Error).message}\n`);
