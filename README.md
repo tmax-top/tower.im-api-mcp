@@ -32,6 +32,8 @@ curl -fsSL https://raw.githubusercontent.com/tmax-top/tower.im-api-mcp/master/in
 
 它会先把源码拉下来（默认放到 `~/.tower-mcp/src`），然后依次完成：装依赖 → 编译 → 冒烟验证 → 把 `tower` 写进 MCP 配置。过程中会询问你的 `client_id` / `client_secret`，也可以提前用环境变量传入。
 
+**结束时会把填好绝对路径的配置直接打印出来**，需要手动接入的客户端（Claude Desktop / Cursor / Cline 等）复制粘贴即可，不用自己去拼路径：
+
 **已经克隆了源码的话，直接跑：**
 
 ```bash
@@ -48,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/tmax-top/tower.im-api-mcp/master/in
 
 在线安装时可用 `TOWER_MCP_DIR` 指定源码位置、`TOWER_MCP_BRANCH` 指定分支。重复运行会自动 `git pull` 到最新——但**如果你的克隆里有未提交的改动，它会跳过更新、直接用现有版本**，不会 `reset --hard` 掉你的东西。
 
-可用的环境变量：`TOWER_CLIENT_ID` / `TOWER_CLIENT_SECRET`（凭证）、`TOWER_MCP_CONFIG`（配置文件路径，默认 `~/.workbuddy-ai/mcp.json`）、`TOWER_MCP_SKIP_AUTH=1`（跳过授权提示）、`TOWER_MCP_FORCE_INSTALL=1`（强制重装依赖）。
+可用的环境变量：`TOWER_CLIENT_ID` / `TOWER_CLIENT_SECRET`（凭证）、`TOWER_MCP_CONFIG`（配置文件路径，默认 `~/.workbuddy-ai/mcp.json`，即 WorkBuddy 的配置；**接入 Claude Desktop / Cursor 等其他客户端时把它指到对方配置文件即可**，详见下文「[接入其他 MCP 客户端](#接入其他-mcp-客户端claude-desktop--cursor--cline-等)」）、`TOWER_MCP_SKIP_AUTH=1`（跳过授权提示）、`TOWER_MCP_FORCE_INSTALL=1`（强制重装依赖）。
 
 写配置前会**自动备份**，并且只合并自己的条目——你原有的其他 MCP 服务不受影响。
 
@@ -109,6 +111,8 @@ npm run auth
 
 ### 4. 接入 MCP 客户端
 
+> **用的不是 WorkBuddy？** 跳过本步，直接看下文「[接入其他 MCP 客户端](#接入其他-mcp-客户端claude-desktop--cursor--cline-等)」——那里有 Claude Desktop / Cursor / Cline 的配置文件位置和两种接入方式。
+
 在你的 MCP 配置文件里加入下面这段（把路径换成实际值）：
 
 ```json
@@ -149,6 +153,75 @@ npm run print-config
 ### 5. 验证
 
 配好后直接问 AI：「列出我的 Tower 团队」。如果报认证失败，让它调用 `tower_get_auth_state`，会返回当前的令牌状态。
+
+---
+
+## 接入其他 MCP 客户端（Claude Desktop / Cursor / Cline 等）
+
+tower-mcp 是标准的 stdio MCP 服务，任何支持 MCP 的客户端都能接。要搞清楚的只有两件事：**客户端的配置文件在哪**、**改完要重启客户端**。授权和凭证与客户端无关，装一次全部共用。
+
+### 各客户端的配置文件位置
+
+| 客户端 | 配置文件路径 |
+| --- | --- |
+| WorkBuddy | `~/.workbuddy-ai/mcp.json`（安装脚本的默认目标） |
+| Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Claude Desktop (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Cursor | `~/.cursor/mcp.json`（全局），或项目根目录 `.cursor/mcp.json`（仅该项目生效） |
+| Cline（及 Roo Code 等分支） | 插件 UI 里操作（MCP Servers 图标 → Configure）；Cline 的实际文件是 `cline_mcp_settings.json`，各分支命名略有差异 |
+| 其他 | 任何含 `mcpServers` 字段的 JSON 配置均适用 |
+
+### 方式一：install.sh 直接注册（推荐）
+
+把 `TOWER_MCP_CONFIG` 指到目标客户端的配置文件再跑安装脚本。脚本会**安全合并**——自动备份原文件，只增删 `tower` 这一个条目，你已有的其他 MCP 服务原样保留：
+
+```bash
+# Claude Desktop（macOS）示例：路径带空格，必须加引号
+TOWER_MCP_CONFIG="$HOME/Library/Application Support/Claude/claude_desktop_config.json" ./install.sh
+
+# Cursor 示例
+TOWER_MCP_CONFIG="$HOME/.cursor/mcp.json" ./install.sh
+
+# 已经装过、只想注册到新客户端：直接重跑即可，
+# node_modules 已存在时会自动跳过依赖安装，速度很快
+TOWER_MCP_CONFIG="$HOME/.cursor/mcp.json" ./install.sh
+```
+
+跑完脚本还会**把填好绝对路径的配置打印出来**，方便你再粘给别的客户端——所以即使目标客户端只能手动配置（比如 Cline 要在插件 UI 里填），跑一次 `./install.sh --no-register` 就能拿到现成的片段。
+
+想换个条目名（例如避免和已有服务重名），加 `TOWER_MCP_NAME=tower2`。
+
+> **注意：所有条目共用同一份凭证和令牌**——条目里不带 `env`，启动器一律读 `~/.tower-mcp/env` 和 `~/.tower-mcp/token.json`。所以改条目名**不能**用来接两个不同的 Tower 账号，两个条目连的还是同一个账号。
+
+### 方式二：手动粘贴
+
+跑 `npm run print-config`，它会打印填好你机器上真实绝对路径的配置，粘进客户端配置文件的 `mcpServers` 下即可：
+
+```json
+{
+  "mcpServers": {
+    "tower": {
+      "type": "stdio",
+      "command": "/绝对路径/tower-mcp/bin/tower-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+几个注意点：
+
+- `command` 必须是**字符串**、`args` 必须是**数组**。写成数组形式的 `command` 在部分客户端会被静默忽略——配置里有、界面上没有、也不报错，极难排查。
+- `type` 是 WorkBuddy 需要的字段（它自己写出的条目就带这个），**别删**；Claude Desktop / Cursor 不认这个字段，留着会被忽略，不影响使用。
+- 凭证不写在配置里（`bin/tower-mcp` 自己从 `~/.tower-mcp/env` 读取），所以不需要 `env` 字段。
+
+### 收尾
+
+1. **完全退出并重启客户端**。MCP 配置只在启动时读取一次，热改不生效。
+2. 问 AI「列出我的 Tower 团队」验证。报认证失败时让它调用 `tower_get_auth_state` 排查。
+
+> 凭证统一放在 `~/.tower-mcp/env`，所以同一份安装可以同时注册进多个客户端，互不影响。
+> OAuth 授权（`npm run auth`）也只跑一次，与用哪个客户端无关。
 
 ---
 
