@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
@@ -107,6 +108,83 @@ test('并发刷新只触发一次令牌请求（单飞）', async () => {
   await Promise.all([client.refresh(), client.refresh(), client.refresh()]);
 
   assert.equal(tokenCalls, 1, '并发刷新应该只发一次请求');
+});
+
+test('刷新请求携带 Bearer 头，并默认使用授权时记录的 redirect_uri', async () => {
+  // 预置一份带 redirectUri 的令牌文件，模拟 npm run auth 之后的状态
+  const config = loadConfig({
+    TOWER_CLIENT_ID: 'id',
+    TOWER_CLIENT_SECRET: 'sec',
+    TOWER_TOKEN_FILE: join(tmpdir(), `tower-mcp-test-${process.pid}-refresh-hdr.json`),
+  } as NodeJS.ProcessEnv);
+  writeFileSync(
+    config.tokenFile,
+    JSON.stringify({
+      accessToken: 'old-token',
+      refreshToken: 'rt',
+      expiresAt: 1, // 已过期，强制走刷新
+      redirectUri: 'http://localhost:3000/callback',
+    }),
+  );
+
+  let capturedHeaders: Record<string, string> = {};
+  let capturedBody = '';
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    capturedHeaders = (init?.headers ?? {}) as Record<string, string>;
+    capturedBody = String(init?.body ?? '');
+    return jsonResponse({ access_token: 'new', refresh_token: 'r2', expires_in: 7200 });
+  }) as typeof fetch;
+
+  const client = new TowerClient(config);
+  await client.refresh();
+
+  // 官方文档要求刷新接口带 Authorization: Bearer <access_token>
+  assert.equal(capturedHeaders.Authorization, 'Bearer old-token');
+  // 官方文档要求 redirect_uri 与授权时一致；未配置 TOWER_REDIRECT_URI 时应取令牌文件里记录的值
+  assert.match(capturedBody, /redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Fcallback/);
+  assert.match(capturedBody, /grant_type=refresh_token/);
+});
+
+test('显式配置的 TOWER_REDIRECT_URI 优先于令牌文件里记录的值', async () => {
+  const config = loadConfig({
+    TOWER_CLIENT_ID: 'id',
+    TOWER_CLIENT_SECRET: 'sec',
+    TOWER_REDIRECT_URI: 'https://www.example.com/oauth2/callback',
+    TOWER_TOKEN_FILE: join(tmpdir(), `tower-mcp-test-${process.pid}-refresh-override.json`),
+  } as NodeJS.ProcessEnv);
+  writeFileSync(
+    config.tokenFile,
+    JSON.stringify({ refreshToken: 'rt', redirectUri: 'http://localhost:3000/callback' }),
+  );
+
+  let capturedBody = '';
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    capturedBody = String(init?.body ?? '');
+    return jsonResponse({ access_token: 'new', refresh_token: 'r2', expires_in: 7200 });
+  }) as typeof fetch;
+
+  await new TowerClient(config).refresh();
+
+  assert.match(capturedBody, /redirect_uri=https%3A%2F%2Fwww.example.com%2Foauth2%2Fcallback/);
+  assert.ok(!capturedBody.includes('localhost'), '不应携带令牌文件里的旧回调地址');
+});
+
+test('授权换令牌成功后会把本次使用的 redirect_uri 持久化', async () => {
+  const config = loadConfig({
+    TOWER_CLIENT_ID: 'id',
+    TOWER_CLIENT_SECRET: 'sec',
+    TOWER_TOKEN_FILE: join(tmpdir(), `tower-mcp-test-${process.pid}-exchange.json`),
+  } as NodeJS.ProcessEnv);
+
+  globalThis.fetch = (async () =>
+    jsonResponse({ access_token: 'at', refresh_token: 'r1', expires_in: 7200 })) as typeof fetch;
+
+  const client = new TowerClient(config);
+  await client.exchangeAuthorizationCode('auth-code', 'http://localhost:3000/callback');
+
+  const stored = JSON.parse(readFileSync(config.tokenFile, 'utf8')) as Record<string, unknown>;
+  assert.equal(stored.redirectUri, 'http://localhost:3000/callback');
+  assert.equal(stored.accessToken, 'at');
 });
 
 test('只配了 refresh_token 时，首次请求会先换取 access_token', async () => {

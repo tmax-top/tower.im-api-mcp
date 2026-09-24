@@ -66,6 +66,47 @@ test('flattenDocument：data 为数组时逐条展平', () => {
   assert.equal(flat[1].name, '项目乙');
 });
 
+test('flattenDocument：讨论(topics)的正文会被转成纯文本', () => {
+  const doc = {
+    data: {
+      id: 'topic1',
+      type: 'topics',
+      attributes: {
+        title: '周会纪要',
+        content: '<p>本周<b>重点</b>：完成上线<br>下周：复盘</p>',
+      },
+    },
+  };
+
+  const flat = flattenDocument(doc) as Record<string, any>;
+  assert.equal(flat.title, '周会纪要');
+  assert.equal(flat.content, '本周重点：完成上线\n下周：复盘');
+});
+
+test('flattenDocument：讨论作为关系出现时取标题而不是正文', () => {
+  // topics 的属性里同时有 title 和 content，取名字必须优先 title，
+  // 否则关系摘要里的 name 会变成整篇正文
+  const doc = {
+    data: {
+      id: 'todo1',
+      type: 'todos',
+      attributes: { content: '整理会议结论' },
+      relationships: { topic: { data: { id: 'tp1', type: 'topics' } } },
+    },
+    included: [
+      {
+        id: 'tp1',
+        type: 'topics',
+        attributes: { title: '周会纪要', content: '这是一整篇很长的讨论正文内容……' },
+      },
+    ],
+  };
+
+  const flat = flattenDocument(doc) as Record<string, any>;
+  assert.equal(flat.topic.name, '周会纪要');
+  assert.ok(!flat.topic.name.includes('很长的讨论正文'), '不应把正文当标题');
+});
+
 test('flattenDocument：included 缺失时保留原始 id 引用而不是崩溃', () => {
   const doc = {
     data: {
