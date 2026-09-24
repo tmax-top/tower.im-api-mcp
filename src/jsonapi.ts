@@ -29,8 +29,14 @@ export interface JsonApiDocument {
   meta?: Record<string, unknown>;
 }
 
-/** 用来给关系对象取一个人类可读名字的候选字段，按优先级排列 */
-const NAME_KEYS = ['name', 'nickname', 'subject', 'content', 'filename', 'title'] as const;
+/**
+ * 用来给关系对象取一个人类可读名字的候选字段，按优先级排列。
+ *
+ * 顺序很关键：title 必须排在 content 前面。讨论(topics)的属性里
+ * 同时有 title（标题）和 content（正文），若 content 优先，关系摘要里的
+ * name 会变成整篇正文，既占上下文又答非所问。
+ */
+const NAME_KEYS = ['name', 'nickname', 'title', 'subject', 'content', 'filename'] as const;
 
 /** 关系对象上额外保留的少量有用字段，避免输出膨胀 */
 const EXTRA_KEYS: Record<string, readonly string[]> = {
@@ -118,7 +124,11 @@ function flattenResource(
   if (typeof out.desc === 'string' && /<[a-z!/]/i.test(out.desc)) {
     out.desc = htmlToText(out.desc);
   }
-  if (resource.type === 'comments' && typeof out.content === 'string') {
+  // 评论正文与讨论正文都是富文本 HTML，统一转纯文本
+  if (
+    (resource.type === 'comments' || resource.type === 'topics') &&
+    typeof out.content === 'string'
+  ) {
     out.content = htmlToText(out.content);
   }
 
