@@ -104,7 +104,7 @@ npm run auth -- --oob
 | `TOWER_ACCESS_TOKEN` | 否 | — | 直接指定访问令牌，2 小时过期后需手动更换。优先级高于令牌文件 |
 | `TOWER_TOKEN_FILE` | 否 | `~/.tower-mcp/token.json` | 令牌文件路径 |
 | `TOWER_BASE_URL` | 否 | `https://tower.im/api/v1` | API 地址 |
-| `TOWER_REDIRECT_URI` | 否 | — | 刷新令牌时一并提交的回调地址。若刷新总是失败，试试把它设成创建应用时填的那个 |
+| `TOWER_REDIRECT_URI` | 否 | — | 刷新令牌时提交的回调地址。默认使用授权时自动记录在令牌文件里的值；仅当需要覆盖时才配置 |
 
 `.env.example` 是配置项的参考清单。MCP 客户端的配置里直接写 `env` 即可；想在命令行调试可以用 Node 原生的 `--env-file`：
 
@@ -219,6 +219,7 @@ Tower 的响应是引用式的：
 Tower 文档明确说明「重复获取将导致上次获取的 Access Token 失效」，所以刷新必须是排他的：
 
 - 用 `Promise` 单飞锁，并发请求共享同一次刷新
+- 刷新请求携带官方要求的 `Authorization: Bearer` 头与 `redirect_uri`（授权时实际使用的回调地址会在授权成功后自动记入令牌文件，刷新时默认复用；也可用 `TOWER_REDIRECT_URI` 覆盖）
 - 每次刷新都会下发新的 `refresh_token`，必须覆盖保存
 - 提前 60 秒判定过期，避免边界失效
 - 遇到 401 自动刷新并重试一次
