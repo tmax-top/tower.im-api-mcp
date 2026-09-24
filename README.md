@@ -12,10 +12,11 @@
 | --- | --- |
 | 完整覆盖 | 用户 / 团队 / 成员 / 项目 / 清单 / 任务 / 讨论 / 文件 / 工时 / 通知 / 动态 / 资源反查 |
 | 令牌自动续期 | Tower 的 `access_token` 仅 2 小时有效。服务用 `refresh_token` 自动续期，并做**单飞控制**避免并发刷新互相踢掉令牌 |
-| JSON:API 展平 | Tower 返回 `data` + `included` + `relationships` 的引用式结构，服务会还原成带人名的扁平对象，模型能直接读懂 |
+| JSON:API 展平 | Tower 返回 `data` + `included` + `relationships` 的引用式结构，服务会还原成带人名的扁平对象，模型能直接读懂；列表结果恒定包装成 `{ items, has_more, next_page }`，输出结构不随数据变化 |
 | 富文本清洗 | 任务描述、评论正文是 HTML，读取时自动转纯文本，省 token 也好读 |
 | 文件直传 | 一个工具完成「申请签名 → 上传阿里云 OSS → 挂到项目文件」全流程 |
 | 凭证持久化 | 令牌落盘（权限 600），重启服务不用重新授权 |
+| 删除二次确认 | 所有删除类工具强制要求 `confirm: true`，且限定为字面量 `true`，模型无法绕过——必须先取得用户明确同意 |
 
 ---
 
@@ -215,6 +216,20 @@ Tower 的响应是引用式的：
 ```json
 { "content": "修登录 bug", "assignee": { "id": "73d2b1df", "type": "members", "name": "张三", "role": "member" } }
 ```
+
+### 分页
+
+Tower 列表响应通过 `links.next` 表示还有下一页（不一定有 `meta`）。**列表类工具的返回值恒定是对象**，数据在 `items` 里：
+
+```json
+{ "items": [ { "id": "...", "name": "..." } ], "has_more": true, "next_page": 2 }
+```
+
+`has_more` 由 `links.next` 推断，`next_page` 从 `links.next` 的 `page[number]` 解析。没有下一页时 `has_more` 为 `false`，且不带 `next_page`。单条查询（`tower_get_*`）仍然直接返回对象。
+
+**为什么恒定包一层，而不是「有下一页才包」**：后者会让同一个工具翻到最后一页时从对象突变回数组，模型无法预期输出结构。而且官方文档的响应样本本身不完整——`todo.md` 文档化了 `page[number]` 参数，但它的样本响应里并没有 `links`，所以运行时到底哪些接口会返回 `links` 是不可预测的。恒定包装让「列表返回对象、单条查询返回对象」成为稳定契约，代价约 35 字节。
+
+需要注意：`has_more` 恒为 `false` 并不代表只有一页，也可能只是该接口的响应不含 `links`。这种情况请自行递增 `page` 参数尝试。
 
 ### 令牌刷新
 

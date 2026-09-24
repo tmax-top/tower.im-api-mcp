@@ -20,10 +20,12 @@ export function registerTopicTools(server: McpServer, client: TowerClient): numb
       description: '列出某个项目下的讨论（Tower 里的「讨论」板块，用于沉淀会议纪要、方案等长文本）。',
       inputSchema: {
         project_id: z.string().describe('项目 id'),
+        page: z.number().int().positive().optional().describe(PAGE_DESC),
       },
       annotations: READ_ONLY,
     },
-    ({ project_id }) => callTool(() => client.get(`/projects/${project_id}/topics`)),
+    ({ project_id, page }) =>
+      callTool(() => client.get(`/projects/${project_id}/topics`, pagination(page))),
   );
 
   server.registerTool(

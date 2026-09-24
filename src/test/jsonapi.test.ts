@@ -53,17 +53,24 @@ test('flattenDocument：relationships 解析成带名字的对象', () => {
   assert.equal(flat.closer, null);
 });
 
-test('flattenDocument：data 为数组时逐条展平', () => {
+test('flattenDocument：data 为数组时逐条展平并恒定包一层', () => {
   const doc = {
     data: [
       { id: 'p1', type: 'projects', attributes: { name: '项目甲' } },
       { id: 'p2', type: 'projects', attributes: { name: '项目乙' } },
     ],
   };
-  const flat = flattenDocument(doc) as Array<Record<string, unknown>>;
-  assert.equal(flat.length, 2);
-  assert.equal(flat[0].name, '项目甲');
-  assert.equal(flat[1].name, '项目乙');
+  const flat = flattenDocument(doc) as {
+    items: Array<Record<string, unknown>>;
+    has_more: boolean;
+    next_page?: number;
+  };
+  assert.equal(flat.items.length, 2);
+  assert.equal(flat.items[0].name, '项目甲');
+  assert.equal(flat.items[1].name, '项目乙');
+  // 没有 links 时 has_more 恒为 false，结构不随数据变化
+  assert.equal(flat.has_more, false);
+  assert.equal(flat.next_page, undefined);
 });
 
 test('flattenDocument：讨论(topics)的正文会被转成纯文本', () => {
@@ -105,6 +112,66 @@ test('flattenDocument：讨论作为关系出现时取标题而不是正文', ()
   const flat = flattenDocument(doc) as Record<string, any>;
   assert.equal(flat.topic.name, '周会纪要');
   assert.ok(!flat.topic.name.includes('很长的讨论正文'), '不应把正文当标题');
+});
+
+test('flattenDocument：数组带 links.next 时包装成分页提示', () => {
+  const doc = {
+    data: [{ id: 'n1', type: 'notifications', attributes: { message: '待办提醒' } }],
+    links: {
+      self: 'https://tower.im/api/v1/teams/t/notifications?page%5Bnumber%5D=1&page%5Bsize%5D=25',
+      next: 'https://tower.im/api/v1/teams/t/notifications?page%5Bnumber%5D=2&page%5Bsize%5D=25',
+      last: 'https://tower.im/api/v1/teams/t/notifications?page%5Bnumber%5D=3&page%5Bsize%5D=25',
+    },
+  };
+
+  const flat = flattenDocument(doc) as Record<string, any>;
+  assert.equal(flat.has_more, true);
+  assert.equal(flat.next_page, 2);
+  assert.equal(flat.items.length, 1);
+  assert.equal(flat.items[0].id, 'n1');
+});
+
+test('flattenDocument：数组没有 links.next 时仍包一层，has_more 为 false', () => {
+  const doc = {
+    data: [{ id: 'p1', type: 'projects', attributes: { name: '项目甲' } }],
+    links: { self: 'https://x', first: 'https://x', last: 'https://x' },
+  };
+
+  const flat = flattenDocument(doc) as Record<string, any>;
+  assert.ok(!Array.isArray(flat), '列表结果必须是对象，不能退回数组');
+  assert.equal(flat.has_more, false);
+  assert.equal(flat.next_page, undefined);
+  assert.equal(flat.items[0].id, 'p1');
+});
+
+test('flattenDocument：翻到最后一页时结构不发生突变', () => {
+  // 这是「恒定包装」要解决的回归点：若按数据决定结构，
+  // 最后一页会从对象突变回数组，模型无法预期。
+  const page = (n: number, hasNext: boolean) => ({
+    data: [{ id: 'tp' + n, type: 'topics', attributes: { title: '讨论' + n } }],
+    links: {
+      self: 'https://tower.im/api/v1/projects/p/topics?page%5Bnumber%5D=' + n,
+      next: hasNext
+        ? 'https://tower.im/api/v1/projects/p/topics?page%5Bnumber%5D=' + (n + 1)
+        : null,
+    },
+  });
+
+  const shapes: string[] = [];
+  const more: boolean[] = [];
+  for (const [n, hasNext] of [
+    [1, true],
+    [2, true],
+    [3, false],
+  ] as Array<[number, boolean]>) {
+    const flat = flattenDocument(page(n, hasNext)) as Record<string, any>;
+    shapes.push(Array.isArray(flat) ? 'array' : 'object');
+    more.push(flat.has_more);
+    assert.equal(flat.items.length, 1, '每页都应能取到 items');
+  }
+
+  assert.deepEqual(shapes, ['object', 'object', 'object'], '三页结构必须完全一致');
+  assert.deepEqual(more, [true, true, false], 'has_more 应逐页反映是否还有下一页');
 });
 
 test('flattenDocument：included 缺失时保留原始 id 引用而不是崩溃', () => {

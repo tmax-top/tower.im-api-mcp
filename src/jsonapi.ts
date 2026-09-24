@@ -147,8 +147,39 @@ function flattenResource(
 }
 
 /**
+ * 列表类响应的统一外壳。
+ *
+ * 「恒定包装」是刻意的：模型的工具调用需要稳定的输出契约。
+ * 如果按数据决定结构（有下一页才包一层），同一个工具翻到最后一页时
+ * 会从对象突变回数组，模型无法预期；不同接口之间也不一致。
+ * 现在「列表工具返回 { items, has_more }，单条查询返回对象」是固定契约，
+ * 代价只有约 35 字节。
+ */
+export interface FlattenedList {
+  items: unknown[];
+  /**
+   * 是否还有下一页，由 links.next 推断。
+   * 注意：并非所有接口的响应都带 links（官方文档样本本身也不完整），
+   * 这类接口恒为 false，翻页请自行递增 page 参数。
+   */
+  has_more: boolean;
+  /** 下一页页码，从 links.next 的 page[number] 解析；仅当 has_more 为 true 时才有 */
+  next_page?: number;
+}
+
+function extractNextPage(nextUrl: string): number | undefined {
+  try {
+    const raw = new URL(nextUrl, 'https://tower.im').searchParams.get('page[number]');
+    const n = raw ? Number.parseInt(raw, 10) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * 把一份 JSON:API 文档展平。
- * - data 是数组 -> 返回数组
+ * - data 是数组 -> 恒定返回 { items, has_more, next_page? }
  * - data 是对象 -> 返回对象
  * - 没有 data（例如 204 或纯 meta）-> 原样返回
  */
@@ -163,14 +194,26 @@ export function flattenDocument(payload: unknown): unknown {
   }
 
   const data = doc.data;
-  if (Array.isArray(data)) return data.map((r) => flattenResource(r, index));
+  if (Array.isArray(data)) {
+    const items = data.map((r) => flattenResource(r, index));
+    const links = (doc as { links?: Record<string, unknown> }).links;
+    const next = typeof links?.next === 'string' && links.next ? links.next : undefined;
+
+    const out: FlattenedList = { items, has_more: next !== undefined };
+    if (next) {
+      const nextPage = extractNextPage(next);
+      if (nextPage !== undefined) out.next_page = nextPage;
+    }
+    return out;
+  }
   if (data && typeof data === 'object') return flattenResource(data, index);
   return payload;
 }
 
 /**
- * 从展平结果里剥掉一些噪音字段（关系里嵌套的空数组等），
- * 让最终写进模型上下文的 JSON 更紧凑。
+ * 收尾清理：递归去掉值为 undefined 的键。
+ * 注意：空数组是有语义的（如 comments: [] 表示「确实没有评论」），必须原样保留，
+ * 不能为了省 token 把它抹掉——模型需要区分「没有」和「字段不存在」。
  */
 export function compact<T>(value: T): T {
   if (Array.isArray(value)) {

@@ -76,10 +76,12 @@ export function registerUploadTools(server: McpServer, client: TowerClient): num
       description: '列出某个项目「文件」板块下的文件，含文件名、大小、类型和可访问的下载地址。',
       inputSchema: {
         project_id: z.string().describe('项目 id'),
+        page: z.number().int().positive().optional().describe(PAGE_DESC),
       },
       annotations: READ_ONLY,
     },
-    ({ project_id }) => callTool(() => client.get(`/projects/${project_id}/uploads`)),
+    ({ project_id, page }) =>
+      callTool(() => client.get(`/projects/${project_id}/uploads`, pagination(page))),
   );
 
   server.registerTool(
