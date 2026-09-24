@@ -1,0 +1,52 @@
+#!/bin/sh
+#
+# tower-mcp 启动器
+#
+# 为什么需要它：
+#   MCP 配置里如果写死 node 的绝对路径，会很脆——尤其是运行时路径里带版本号的情况
+#   （例如 ~/.workbuddy-ai/binaries/node/versions/22.22.2-3/bin/node），
+#   一旦运行时升级，路径就失效，服务静默启动失败。
+#
+#   这个启动器自己按顺序探测可用的 node，配置里只需要写它自己的路径，
+#   而项目目录一般不会动。node 换版本、换安装方式都不用改配置。
+#
+# 用法：在 MCP 配置里写
+#   "command": ["/绝对路径/tower-mcp/bin/tower-mcp"]
+#
+set -e
+
+# 解析脚本自身所在目录（兼容通过软链调用）
+SELF=$0
+while [ -h "$SELF" ]; do
+  LINK=$(readlink "$SELF")
+  case "$LINK" in
+    /*) SELF=$LINK ;;
+    *) SELF=$(dirname "$SELF")/$LINK ;;
+  esac
+done
+DIR=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
+ENTRY="$DIR/../dist/index.js"
+
+if [ ! -f "$ENTRY" ]; then
+  echo "tower-mcp: 找不到 $ENTRY" >&2
+  echo "请先在项目目录执行：npm install && npm run build" >&2
+  exit 1
+fi
+
+# 依次尝试：PATH 里的 node -> 常见安装位置
+# 注意 macOS 上 GUI 启动的进程常常拿不到用户 shell 的 PATH，所以必须有绝对路径兜底。
+for candidate in \
+  "$(command -v node 2>/dev/null || true)" \
+  "$HOME/.local/bin/node" \
+  /usr/local/bin/node \
+  /opt/homebrew/bin/node \
+  /usr/bin/node
+do
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    exec "$candidate" "$ENTRY" "$@"
+  fi
+done
+
+echo "tower-mcp: 未找到可用的 node（需要 Node.js 18+）" >&2
+echo "请安装 Node.js，或把 node 的绝对路径写进 MCP 配置的 command 数组" >&2
+exit 1

@@ -72,7 +72,7 @@ npm run auth -- --oob
 {
   "mcpServers": {
     "tower": {
-      "command": ["/绝对路径/node", "/绝对路径/tower-mcp/dist/index.js"],
+      "command": ["/绝对路径/tower-mcp/bin/tower-mcp"],
       "env": {
         "TOWER_CLIENT_ID": "你的应用ID",
         "TOWER_CLIENT_SECRET": "你的私钥"
@@ -84,6 +84,21 @@ npm run auth -- --oob
   }
 }
 ```
+
+**路径不用手写。** 跑下面这个命令，会直接打印出可粘贴的配置，里面已经填好你机器上的真实绝对路径：
+
+```bash
+npm run print-config
+```
+
+它给出两种写法：
+
+| 写法 | `command` | 说明 |
+| --- | --- | --- |
+| **启动器（推荐）** | `["/绝对路径/tower-mcp/bin/tower-mcp"]` | 只有一个路径，不含 node。启动器自己按 `PATH` → `~/.local/bin` → `/usr/local/bin` → `/opt/homebrew/bin` 的顺序找 node |
+| 显式指定 node | `["/绝对路径/node", "/绝对路径/tower-mcp/dist/index.js"]` | 传统写法。但 node 路径里若带版本号（如 `.../node/versions/22.22.2-3/bin/node`），运行时一升级就失效 |
+
+**为什么推荐启动器**：node 的安装路径经常带版本号，写死会在升级后静默失效——服务不报错，只是连不上，很难排查。启动器还顺带解决了 macOS 上 GUI 启动的进程拿不到用户 shell `PATH` 的问题：它内置了绝对路径兜底，即使 `PATH` 里没有 node 也能起来。
 
 在 WorkBuddy 里的操作路径：侧边栏 **插件** → 右上角 **MCP 服务器** → **配置 MCP**。保存后还需要到连接器管理页右上角的**自定义连接器**入口点一次「信任」，服务才会启用。
 
