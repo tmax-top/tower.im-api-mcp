@@ -19,6 +19,8 @@ interface StoredToken {
   /** 毫秒时间戳 */
   expiresAt?: number;
   email?: string;
+  /** 授权时使用的回调地址。Tower 刷新令牌要求 redirect_uri 与授权时一致，必须记下来 */
+  redirectUri?: string;
 }
 
 interface TokenResponse {
@@ -90,6 +92,7 @@ export class TowerClient {
       hasRefreshToken: Boolean(this.token.refreshToken),
       expiresAt: this.token.expiresAt ? new Date(this.token.expiresAt).toISOString() : null,
       account: this.token.email ?? null,
+      redirectUri: this.config.redirectUri ?? this.token.redirectUri ?? null,
     };
   }
 
@@ -114,6 +117,7 @@ export class TowerClient {
       refreshToken: fromEnv.refreshToken ?? fromFile.refreshToken,
       expiresAt: fromEnv.accessToken ? undefined : fromFile.expiresAt,
       email: fromFile.email,
+      redirectUri: fromFile.redirectUri,
     };
   }
 
@@ -128,6 +132,7 @@ export class TowerClient {
             refreshToken: this.token.refreshToken,
             expiresAt: this.token.expiresAt,
             email: this.token.email,
+            redirectUri: this.token.redirectUri,
           },
           null,
           2,
@@ -187,11 +192,21 @@ export class TowerClient {
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
     });
-    if (redirectUri) form.set('redirect_uri', redirectUri);
+    // 官方文档要求 redirect_uri 与授权时保持一致：
+    // 显式配置(TOWER_REDIRECT_URI) > 授权时记录在令牌文件里的值
+    const effectiveRedirectUri = redirectUri ?? this.token.redirectUri;
+    if (effectiveRedirectUri) form.set('redirect_uri', effectiveRedirectUri);
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    };
+    // 官方文档要求刷新请求携带 Bearer 头（当前的 access_token）
+    if (this.token.accessToken) headers.Authorization = `Bearer ${this.token.accessToken}`;
 
     const res = await fetch(tokenUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      headers,
       body: form.toString(),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -214,13 +229,14 @@ export class TowerClient {
     this.applyTokenResponse(body);
   }
 
-  private applyTokenResponse(body: TokenResponse): void {
+  private applyTokenResponse(body: TokenResponse, redirectUri?: string): void {
     this.token = {
       accessToken: body.access_token,
       // Tower 每次刷新都会下发新的 refresh_token，必须存下来
       refreshToken: body.refresh_token ?? this.token.refreshToken,
       expiresAt: body.expires_in ? Date.now() + body.expires_in * 1000 : undefined,
       email: body.email ?? this.token.email,
+      redirectUri: redirectUri ?? this.token.redirectUri,
     };
     this.saveToken();
   }
@@ -258,7 +274,7 @@ export class TowerClient {
     if (!res.ok || body.error) {
       throw new TowerApiError(`换取令牌失败——${describeError(res.status, body)}`, res.status, body);
     }
-    if (body.access_token) this.applyTokenResponse(body);
+    if (body.access_token) this.applyTokenResponse(body, redirectUri);
     return body;
   }
 
