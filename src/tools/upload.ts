@@ -4,7 +4,16 @@ import { basename, isAbsolute, resolve } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { TowerClient } from '../tower-client.js';
-import { DESTRUCTIVE, READ_ONLY, WRITE, callTool, omitUndefined } from './helpers.js';
+import {
+  DELETE_CONFIRM,
+  DESTRUCTIVE,
+  PAGE_DESC,
+  READ_ONLY,
+  WRITE,
+  callTool,
+  omitUndefined,
+  pagination,
+} from './helpers.js';
 
 interface DirectUploadTicket {
   guid: string;
@@ -16,6 +25,47 @@ interface DirectUploadTicket {
     callback: string;
     key: string;
   };
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  pdf: 'application/pdf',
+  zip: 'application/zip',
+  rar: 'application/vnd.rar',
+  '7z': 'application/x-7z-compressed',
+  gz: 'application/gzip',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  mkv: 'video/x-matroska',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  m4a: 'audio/mp4',
+  txt: 'text/plain',
+  md: 'text/markdown',
+  csv: 'text/csv',
+  html: 'text/html',
+  json: 'application/json',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+
+/** 按扩展名推断 MIME 类型。OSS 回调里的 mimeType 取自上传时的 Content-Type，缺省 octet-stream 会让 Tower 无法生成图片预览 */
+export function guessMimeType(filename: string): string {
+  const dot = filename.lastIndexOf('.');
+  if (dot <= 0 || dot === filename.length - 1) return 'application/octet-stream';
+  const ext = filename.slice(dot + 1).toLowerCase();
+  return MIME_BY_EXT[ext] ?? 'application/octet-stream';
 }
 
 export function registerUploadTools(server: McpServer, client: TowerClient): number {
@@ -85,15 +135,17 @@ export function registerUploadTools(server: McpServer, client: TowerClient): num
         filename: z.string().optional().describe('自定义下载文件名'),
         version: z.enum(['small', 'medium', 'large']).optional().describe('图片尺寸版本'),
         download: z.boolean().optional().describe('设为 true 生成下载链接而非预览链接'),
+        content_type: z.string().optional().describe('自定义 Content Type'),
       },
       annotations: READ_ONLY,
     },
-    ({ attfile_id, filename, version, download }) =>
+    ({ attfile_id, filename, version, download, content_type }) =>
       callTool(() =>
         client.get(`/attfiles/${attfile_id}`, omitUndefined({
           filename,
           version,
           download: download ? 'true' : undefined,
+          content_type,
         })),
       ),
   );
@@ -138,13 +190,19 @@ export function registerUploadTools(server: McpServer, client: TowerClient): num
 
         // 2) 以 multipart/form-data 直传阿里云 OSS。
         //    表单字段顺序有讲究：file 必须放在最后。
+        //    Blob 必须带 type：OSS 用 part 的 Content-Type 决定对象类型，
+        //    缺省会变成 application/octet-stream，Tower 端就没了图片预览。
         const form = new FormData();
         form.append('key', ticket.directUpload.key);
         form.append('policy', ticket.directUpload.policy);
         form.append('OSSAccessKeyId', ticket.directUpload.OSSAccessKeyId);
         form.append('Signature', ticket.directUpload.Signature);
         form.append('callback', ticket.directUpload.callback);
-        form.append('file', new Blob([new Uint8Array(buffer)]), filename);
+        form.append(
+          'file',
+          new Blob([new Uint8Array(buffer)], { type: guessMimeType(filename) }),
+          filename,
+        );
 
         const ossRes = await fetch(ticket.directUpload.url, {
           method: 'POST',
