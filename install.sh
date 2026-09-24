@@ -304,6 +304,7 @@ fi
 
 # ---------------------------------------------------------------- 授权
 TOKEN_FILE="${TOWER_TOKEN_FILE:-$HOME/.tower-mcp/token.json}"
+ENV_FILE_PATH="${TOWER_ENV_FILE:-$HOME/.tower-mcp/env}"
 
 printf '\n==> OAuth 授权\n'
 if [ -f "$TOKEN_FILE" ]; then
@@ -326,12 +327,47 @@ else
 fi
 
 # ---------------------------------------------------------------- 完成
+CONFIG_PATH="${TOWER_MCP_CONFIG:-$HOME/.workbuddy-ai/mcp.json}"
+
 printf '\n完成。\n\n'
-item 'MCP 配置' "${TOWER_MCP_CONFIG:-$HOME/.workbuddy-ai/mcp.json}"
 item '服务入口' "$PROJECT_DIR/bin/tower-mcp"
 item '令牌文件' "$TOKEN_FILE"
+if [ "$REGISTER" -eq 1 ]; then
+  item 'MCP 配置' "$CONFIG_PATH"
+else
+  item 'MCP 配置' '未自动写入（指定了 --no-register）'
+fi
 
+# ---------------------------------------------------------------- 可粘贴的配置
+# 绝对路径直接打印出来，需要手动接的客户端（Claude Desktop / Cursor / Cline 等）
+# 复制粘贴即可，不用自己去拼路径。
+printf '\n==> 其他客户端用的配置\n\n'
+if [ "$REGISTER" -eq 1 ]; then
+  printf '  已自动写入上面那个 MCP 配置文件。\n'
+  printf '  接入其他客户端时，把下面这段粘进它们的配置文件（mcpServers 下）即可：\n\n'
+else
+  printf '  把下面这段粘进你的 MCP 客户端配置文件（mcpServers 下）即可：\n\n'
+fi
+
+"$NODE" "$PROJECT_DIR/scripts/print-mcp-config.mjs" --json-only | sed 's/^/  /'
+
+printf '\n  凭证由启动器自己从 %s 读取，所以配置里不用写 env。\n' "$ENV_FILE_PATH"
+if [ "$ENV_FILE_PATH" != "$HOME/.tower-mcp/env" ]; then
+  printf '\n  注意：你用了非默认的凭证路径。客户端拉起服务时不会自动带上 TOWER_ENV_FILE，\n'
+  printf '        需要在上面那段配置里补一个 env 字段：\n'
+  printf '          "env": { "TOWER_ENV_FILE": "%s" }\n' "$ENV_FILE_PATH"
+fi
+printf '\n  各客户端的配置文件位置见 README 的「接入其他 MCP 客户端」一节。\n'
+
+# ---------------------------------------------------------------- 下一步
 printf '\n下一步：\n'
-printf '  1. 到 WorkBuddy 连接器管理页右上角的「自定义连接器」入口点一次「信任」，服务才会启用。\n'
+case "$CONFIG_PATH" in
+  *workbuddy*)
+    printf '  1. 到 WorkBuddy 连接器管理页右上角的「自定义连接器」入口点一次「信任」，服务才会启用。\n'
+    ;;
+  *)
+    printf '  1. 完全退出并重启客户端——MCP 配置只在启动时读取一次，热改不生效。\n'
+    ;;
+esac
 printf '  2. 然后问 AI：「列出我的 Tower 团队」。\n'
-printf '  3. 用其他 MCP 客户端时，跑 npm run print-config 生成对应配置。\n'
+printf '  3. 完整配置（含备选写法）随时可用：npm run print-config\n'

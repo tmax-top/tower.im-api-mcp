@@ -23,6 +23,24 @@ const envFile = join(homedir(), '.tower-mcp', 'env');
 const built = existsSync(entry);
 const envFileExists = existsSync(envFile);
 
+/** 推荐写法：用启动器，不含 node 路径 */
+const recommendedConfig = {
+  mcpServers: {
+    tower: {
+      type: 'stdio',
+      command: launcher,
+      args: [],
+    },
+  },
+};
+
+// --json-only：只输出配置本身，供 install.sh 内嵌调用。
+// 这样「配置长什么样」只有这一处定义，不会两边各写一份然后慢慢跑偏。
+if (process.argv.includes('--json-only')) {
+  process.stdout.write(`${JSON.stringify(recommendedConfig, null, 2)}\n`);
+  process.exit(0);
+}
+
 function section(title, body) {
   process.stdout.write(`\n${title}\n${'─'.repeat(title.length)}\n${body}\n`);
 }
@@ -35,19 +53,7 @@ process.stdout.write(`  凭证文件 : ${envFile}${envFileExists ? '' : '  ← �
 
 section(
   '推荐：用启动器（不含 node 路径，node 换版本也不会失效）',
-  JSON.stringify(
-    {
-      mcpServers: {
-        tower: {
-          type: 'stdio',
-          command: launcher,
-          args: [],
-        },
-      },
-    },
-    null,
-    2,
-  ),
+  JSON.stringify(recommendedConfig, null, 2),
 );
 
 section(
