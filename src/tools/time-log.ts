@@ -1,7 +1,16 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { TowerClient } from '../tower-client.js';
-import { DESTRUCTIVE, PAGE_DESC, READ_ONLY, WRITE, callTool, omitUndefined, pagination } from './helpers.js';
+import {
+  DELETE_CONFIRM,
+  DESTRUCTIVE,
+  PAGE_DESC,
+  READ_ONLY,
+  WRITE,
+  callTool,
+  omitUndefined,
+  pagination,
+} from './helpers.js';
 
 const TIME_DESC = '时间点，格式 2026-09-30T14:00';
 
@@ -76,9 +85,12 @@ export function registerTimeLogTools(server: McpServer, client: TowerClient): nu
     'tower_delete_time_log',
     {
       title: '删除工时',
-      description: '删除一条工时记录。不可逆，删除前请与用户确认。',
+      description:
+        '删除一条工时记录，不可逆。' +
+        '调用前必须先向用户说明要删除的工时记录 id 与归属人，取得明确同意后再传 confirm: true。',
       inputSchema: {
         time_log_id: z.string().describe('工时记录 id'),
+        ...DELETE_CONFIRM,
       },
       annotations: DESTRUCTIVE,
     },

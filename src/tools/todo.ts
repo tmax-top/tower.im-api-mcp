@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { TowerClient } from '../tower-client.js';
 import {
+  DELETE_CONFIRM,
   DESTRUCTIVE,
   PAGE_DESC,
   READ_ONLY,
@@ -136,9 +137,12 @@ export function registerTodoTools(server: McpServer, client: TowerClient): numbe
     'tower_delete_todo',
     {
       title: '删除任务',
-      description: '删除指定任务。不可逆，删除前请与用户确认。',
+      description:
+        '删除指定任务，不可逆。' +
+        '调用前必须先向用户说明要删除的任务标题与 id，取得明确同意后再传 confirm: true。',
       inputSchema: {
         todo_id: z.string().describe('任务 id'),
+        ...DELETE_CONFIRM,
       },
       annotations: DESTRUCTIVE,
     },

@@ -24,8 +24,15 @@ const INSTRUCTIONS = `Tower 项目管理工具集。Tower 的资源层级是：�
 注意事项：
 - 所有 id 都是 32 位十六进制字符串，不要自己编造，必须从上一个查询结果里取。
 - 创建任务必须知道 todolist_id，所以通常要先走 团队 -> 项目 -> 清单 这条链路。
+- **列表类工具的返回值恒定是对象 { items: [...], has_more: bool, next_page?: number }**，
+  数据在 items 里；单条查询（get_*）才直接返回对象。结构不会随数据变化。
+- 翻页：has_more 为 true 时可用 next_page 作为 page 参数继续往后翻。
+  has_more 恒为 false 的接口表示响应里没有分页线索，此时自行递增 page 参数尝试。
 - 任务描述(desc)、讨论正文、评论支持 HTML；读取时会被自动转成纯文本。
-- 删除类操作不可逆，执行前先向用户确认。
+- **删除类工具必须二次确认**：所有 tower_delete_* 工具都带一个必填的 confirm 参数，
+  且只接受 true。调用前必须先在对话中向用户说明要删除的对象（名称 + id），
+  得到用户明确同意后再传 confirm: true。
+  用户此前说过要删不算数，每次删除都要重新确认；用户未表态时应先询问，不要替用户决定。
 - 遇到 401 认证失败时，调用 tower_get_auth_state 查看授权状态。`;
 
 async function main(): Promise<void> {

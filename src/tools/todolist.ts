@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { TowerClient } from '../tower-client.js';
-import { DESTRUCTIVE, READ_ONLY, WRITE, callTool, omitUndefined } from './helpers.js';
+import { DELETE_CONFIRM, DESTRUCTIVE, READ_ONLY, WRITE, callTool, omitUndefined } from './helpers.js';
 
 export function registerTodolistTools(server: McpServer, client: TowerClient): number {
   server.registerTool(
@@ -73,9 +73,12 @@ export function registerTodolistTools(server: McpServer, client: TowerClient): n
     'tower_delete_todolist',
     {
       title: '删除任务清单',
-      description: '删除指定清单（连同其中的任务）。不可逆，删除前请与用户确认。',
+      description:
+        '删除指定清单，不可逆，且会连同清单中的任务一并删除。' +
+        '调用前必须先向用户说明要删除的清单名称与 id，取得明确同意后再传 confirm: true。',
       inputSchema: {
         todolist_id: z.string().describe('清单 id'),
+        ...DELETE_CONFIRM,
       },
       annotations: DESTRUCTIVE,
     },

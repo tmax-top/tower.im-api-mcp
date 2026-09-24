@@ -115,9 +115,12 @@ export function registerUploadTools(server: McpServer, client: TowerClient): num
     'tower_delete_upload',
     {
       title: '删除文件',
-      description: '从项目文件列表中删除指定文件。不可逆，删除前请与用户确认。',
+      description:
+        '从项目文件列表中删除指定文件，不可逆。' +
+        '调用前必须先向用户说明要删除的文件名与 id，取得明确同意后再传 confirm: true。',
       inputSchema: {
         upload_id: z.string().describe('文件 id'),
+        ...DELETE_CONFIRM,
       },
       annotations: DESTRUCTIVE,
     },

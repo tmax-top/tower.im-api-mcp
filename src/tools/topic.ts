@@ -1,7 +1,16 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { TowerClient } from '../tower-client.js';
-import { DESTRUCTIVE, READ_ONLY, WRITE, callTool, omitUndefined } from './helpers.js';
+import {
+  DELETE_CONFIRM,
+  DESTRUCTIVE,
+  PAGE_DESC,
+  READ_ONLY,
+  WRITE,
+  callTool,
+  omitUndefined,
+  pagination,
+} from './helpers.js';
 
 export function registerTopicTools(server: McpServer, client: TowerClient): number {
   server.registerTool(
@@ -79,9 +88,12 @@ export function registerTopicTools(server: McpServer, client: TowerClient): numb
     'tower_delete_topic',
     {
       title: '删除讨论',
-      description: '删除指定讨论。不可逆，删除前请与用户确认。',
+      description:
+        '删除指定讨论，不可逆，正文与回复一并删除。' +
+        '调用前必须先向用户说明要删除的讨论标题与 id，取得明确同意后再传 confirm: true。',
       inputSchema: {
         topic_id: z.string().describe('讨论 id'),
+        ...DELETE_CONFIRM,
       },
       annotations: DESTRUCTIVE,
     },

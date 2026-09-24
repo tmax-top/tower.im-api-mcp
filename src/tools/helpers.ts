@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { compact, flattenDocument } from '../jsonapi.js';
 
 export interface ToolTextResult {
@@ -47,6 +48,26 @@ export function pagination(page?: number, size?: number): Record<string, string 
 export const READ_ONLY = { readOnlyHint: true, openWorldHint: true } as const;
 export const WRITE = { readOnlyHint: false, destructiveHint: false, openWorldHint: true } as const;
 export const DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, openWorldHint: true } as const;
+
+/**
+ * 删除类工具的**强制二次确认**参数。
+ *
+ * 用 `z.literal(true)` 而不是 `z.boolean()`：只接受 `true`，传 `false` 会直接校验失败。
+ * 这样模型没法「顺手」填个 false 蒙混过去，必须显式声明 true 才能调用，
+ * 从而强制它在调用前走完「向用户说明 -> 取得明确同意」这一步。
+ *
+ * 注意：光靠工具描述里写「请先确认」是不够的——那只是建议，模型可能忽略。
+ * 做成必填参数才是硬性约束。
+ */
+export const DELETE_CONFIRM = {
+  confirm: z
+    .literal(true)
+    .describe(
+      '删除确认，必须传 true。调用前必须先向用户说明要删除的对象（名称与 id），' +
+        '并取得用户在对话中的明确同意；未取得同意时不要调用本工具。' +
+        '用户此前说过要删不算数，每次删除都要重新确认。',
+    ),
+} as const;
 
 /** 通用分页参数描述，多个工具复用 */
 export const PAGE_DESC = '页码，从 1 开始；不传默认第一页';

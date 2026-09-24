@@ -116,6 +116,8 @@ node --env-file=.env dist/index.js
 
 ## 工具清单
 
+> 所有 `tower_delete_*` 工具都必须传 `confirm: true` 才能调用（传 `false` 会被参数校验拒绝），详见下文「删除的二次确认」。
+
 ### 用户与团队
 
 | 工具 | 作用 |
@@ -228,31 +230,56 @@ Tower 文档明确说明「重复获取将导致上次获取的 Access Token 失
 
 工具内部异常会被捕获成 `isError` 结果返回给模型，而不是让服务进程崩掉——模型看到错误信息后可以自行纠正重试。JSON:API 的 `errors` 数组会被拼成可读文字，并按状态码补充排查提示（401 → 查令牌、422 → 查参数等）。
 
+### 删除的二次确认
+
+删除是不可逆的，所以**不能只靠提示词约束**。所有删除类工具（`tower_delete_project` / `tower_delete_todolist` / `tower_delete_todo` / `tower_delete_topic` / `tower_delete_upload` / `tower_delete_time_log`）都带一个**必填**的 `confirm` 参数，类型是 `z.literal(true)`——只接受 `true`，不传或传 `false` 都会在**进入处理函数之前**被参数校验拦下：
+
+```
+不传 confirm   -> MCP error -32602: Input validation error:
+                  Invalid arguments for tool tower_delete_todo:
+                  Invalid literal value, expected true at confirm
+confirm=false  -> 同上，同样被拒
+confirm=true   -> 通过校验，正常执行
+```
+
+**为什么用必填参数，而不是只在工具描述里写「请先确认」**：描述只是建议，模型可能忽略。做成 schema 里的必填字面量才是硬约束——模型必须显式声明 `true` 才能调用，这一步没法「顺手」完成，从而强制它在调用前走完「向用户说明 → 取得明确同意」这个流程。
+
+工具描述和服务的 `INSTRUCTIONS` 里都写明了：用户此前说过要删**不算数**，每次删除都要重新确认；用户未表态时应先询问，不要替用户决定。
+
+> 说明：`tower_reopen_todo` 和 `tower_unassign_todo` 虽然走的是 HTTP `DELETE` 方法，但语义是「重新打开任务」「取消指派」，可逆且不丢数据，因此没有要求二次确认。
+
 ---
 
 ## 开发
 
 ```bash
-npm run build     # 编译
-npm run watch     # 增量编译
-npm test          # 跑测试（18 个用例）
-npm run inspect   # 用官方 MCP Inspector 交互式调试
+npm run build        # 编译
+npm run watch        # 增量编译
+npm test             # 跑测试（40 个用例）
+npm run print-config # 打印可直接粘贴的 MCP 配置（自动填好绝对路径）
+npm run auth         # OAuth 授权
+npm run inspect      # 用官方 MCP Inspector 交互式调试
 ```
 
-测试覆盖：JSON:API 展平、富文本清洗、令牌单飞刷新、401 重试、分页参数拼接、服务启动与工具注册完整性。
+测试覆盖：JSON:API 展平（含列表恒定包装与翻页结构稳定性）、富文本清洗（desc/评论/讨论）、令牌单飞刷新（Bearer 头与 redirect_uri）、401 重试、令牌文件权限收紧、分页参数拼接、MIME 推断、删除工具的二次确认硬约束、授权回调方式决策（Tower 只接受 https）、服务启动与工具注册完整性。
 
 目录结构：
 
 ```
+bin/
+└── tower-mcp         启动器：自行定位 node，让 MCP 配置里不必写死 node 路径
+scripts/
+└── print-mcp-config.mjs  生成可粘贴的 MCP 配置（npm run print-config）
 src/
 ├── index.ts          服务入口（stdio 传输）
 ├── auth-cli.ts       OAuth 授权助手
+├── auth-redirect.ts  授权回调方式决策（oob / 本地回调）
 ├── config.ts         环境变量解析
 ├── tower-client.ts   HTTP 客户端 + 令牌管理
 ├── jsonapi.ts        JSON:API 展平 + HTML 清洗
 ├── tools/            按域拆分的工具实现
 │   ├── index.ts      注册总表
-│   ├── helpers.ts    结果渲染与错误包装
+│   ├── helpers.ts    结果渲染、错误包装、删除确认参数
 │   └── user/team/member/project/todolist/todo/topic/upload/time-log/activity.ts
 └── test/             测试
 ```
@@ -261,7 +288,7 @@ src/
 
 ## 注意事项与已知限制
 
-- **删除类操作不可逆**。工具描述里已标注，建议在 AI 执行前确认。
+- **删除类操作不可逆，且强制二次确认**。所有 `tower_delete_*` 工具都要求传 `confirm: true`（字面量，传 `false` 会被拒），调用前 AI 必须向你说明删除对象并取得同意。详见上文「删除的二次确认」。
 - **id 必须来自查询结果**。Tower 的 id 是 32 位十六进制串，无法推测，也不要用网页 URL 里的数字直接当 id（那是 `team_wide_id`，用 `tower_get_todo_by_team_wide_id` 或 `tower_resolve_team_resource` 转换）。
 - **自定义字段需要 key**。更新自定义字段要传形如 `select_C4SJPfKe` 的 key，取值可在任务详情的 `custom_field_value.custom_fields` 里看到。工具通过 `custom_fields` 参数透传。
 - **评论 @ 人必须用 HTML**。Tower 要求写成 `<a href="/members/{member_id}" data-mention="true">@昵称</a>`，工具描述里已写明。
