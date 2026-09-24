@@ -22,6 +22,42 @@
 
 ## 快速开始
 
+### 最省事：一键安装
+
+**不用先克隆，一条命令搞定：**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tmax-top/tower.im-api-mcp/master/install.sh | sh
+```
+
+它会先把源码拉下来（默认放到 `~/.tower-mcp/src`），然后依次完成：装依赖 → 编译 → 冒烟验证 → 把 `tower` 写进 MCP 配置。过程中会询问你的 `client_id` / `client_secret`，也可以提前用环境变量传入。
+
+**已经克隆了源码的话，直接跑：**
+
+```bash
+./install.sh
+```
+
+两种方式都支持这些参数：
+
+| 命令 | 作用 |
+| --- | --- |
+| `./install.sh` | 完整安装 |
+| `./install.sh --no-register` | 只装依赖和编译，不动 MCP 配置 |
+| `./install.sh --uninstall` | 从 MCP 配置里移除 `tower` 条目 |
+
+在线安装时可用 `TOWER_MCP_DIR` 指定源码位置、`TOWER_MCP_BRANCH` 指定分支。重复运行会自动 `git pull` 到最新——但**如果你的克隆里有未提交的改动，它会跳过更新、直接用现有版本**，不会 `reset --hard` 掉你的东西。
+
+可用的环境变量：`TOWER_CLIENT_ID` / `TOWER_CLIENT_SECRET`（凭证）、`TOWER_MCP_CONFIG`（配置文件路径，默认 `~/.workbuddy-ai/mcp.json`）、`TOWER_MCP_SKIP_AUTH=1`（跳过授权提示）、`TOWER_MCP_FORCE_INSTALL=1`（强制重装依赖）。
+
+写配置前会**自动备份**，并且只合并自己的条目——你原有的其他 MCP 服务不受影响。
+
+> node 路径是运行时探测的，不写死，所以运行时升级不会让它失效。凭证存在 `~/.tower-mcp/env`（权限 600），不进 MCP 客户端配置。
+
+### 或者：按下面的步骤手动来
+
+1~5 步是手动流程，想逐步控制时用。
+
 ### 1. 创建 Tower 应用，拿到凭证
 
 1. 进入你的 Tower 团队，点击左上角**团队名称**
@@ -79,18 +115,17 @@ npm run auth
 {
   "mcpServers": {
     "tower": {
-      "command": ["/绝对路径/tower-mcp/bin/tower-mcp"],
-      "env": {
-        "TOWER_CLIENT_ID": "你的应用ID",
-        "TOWER_CLIENT_SECRET": "你的私钥"
-      },
-      "type": "local",
-      "enabled": true,
-      "disabled": false
+      "type": "stdio",
+      "command": "/绝对路径/tower-mcp/bin/tower-mcp",
+      "args": []
     }
   }
 }
 ```
+
+**结构必须是这样**：`command` 是**字符串**、`args` 是**数组**、`type` 是 `"stdio"`。把 `command` 写成数组（某些 MCP 客户端支持那种写法）会导致条目被**静默忽略**——配置文件里明明有，界面上就是不显示，也不报错。
+
+凭证不写进配置：由 `bin/tower-mcp` 从 `~/.tower-mcp/env` 读取，密钥不进客户端配置。`./install.sh` 会自动生成这个文件。
 
 **路径不用手写。** 跑下面这个命令，会直接打印出可粘贴的配置，里面已经填好你机器上的真实绝对路径：
 
@@ -102,12 +137,14 @@ npm run print-config
 
 | 写法 | `command` | 说明 |
 | --- | --- | --- |
-| **启动器（推荐）** | `["/绝对路径/tower-mcp/bin/tower-mcp"]` | 只有一个路径，不含 node。启动器自己按 `PATH` → `~/.local/bin` → `/usr/local/bin` → `/opt/homebrew/bin` 的顺序找 node |
-| 显式指定 node | `["/绝对路径/node", "/绝对路径/tower-mcp/dist/index.js"]` | 传统写法。但 node 路径里若带版本号（如 `.../node/versions/22.22.2-3/bin/node`），运行时一升级就失效 |
+| **启动器（推荐）** | `"/绝对路径/tower-mcp/bin/tower-mcp"` | 不含 node。启动器自己按 `PATH` → `~/.local/bin` → `/usr/local/bin` → `/opt/homebrew/bin` 的顺序找 node |
+| 显式指定 node | `"/绝对路径/node"` + `args: ["/绝对路径/tower-mcp/dist/index.js"]` | 传统写法。但 node 路径里若带版本号（如 `.../node/versions/22.22.2-3/bin/node`），运行时一升级就失效 |
 
 **为什么推荐启动器**：node 的安装路径经常带版本号，写死会在升级后静默失效——服务不报错，只是连不上，很难排查。启动器还顺带解决了 macOS 上 GUI 启动的进程拿不到用户 shell `PATH` 的问题：它内置了绝对路径兜底，即使 `PATH` 里没有 node 也能起来。
 
-在 WorkBuddy 里的操作路径：侧边栏 **插件** → 右上角 **MCP 服务器** → **配置 MCP**。保存后还需要到连接器管理页右上角的**自定义连接器**入口点一次「信任」，服务才会启用。
+在 WorkBuddy 里的操作路径：侧边栏 **插件** → 右上角 **MCP 服务器** → **配置 MCP**。
+
+改完配置**必须重启 WorkBuddy**（daemon 只在启动时读一次配置，不监听文件变化），重启后还要到连接器管理页右上角的**自定义连接器**入口点一次「信任」，服务才会启用。
 
 ### 5. 验证
 
@@ -128,8 +165,9 @@ npm run print-config
 | `TOWER_TOKEN_FILE` | 否 | `~/.tower-mcp/token.json` | 令牌文件路径 |
 | `TOWER_BASE_URL` | 否 | `https://tower.im/api/v1` | API 地址 |
 | `TOWER_REDIRECT_URI` | 否 | — | 刷新令牌时提交的回调地址。默认使用授权时自动记录在令牌文件里的值；仅当需要覆盖时才配置 |
+| `TOWER_ENV_FILE` | 否 | `~/.tower-mcp/env` | 凭证文件路径。`bin/tower-mcp` 启动时读取它（每行 `KEY=VALUE`），已存在的环境变量优先 |
 
-`.env.example` 是配置项的参考清单。MCP 客户端的配置里直接写 `env` 即可；想在命令行调试可以用 Node 原生的 `--env-file`：
+`.env.example` 是配置项的参考清单。凭证推荐放在 `~/.tower-mcp/env`（`./install.sh` 会自动生成，权限 600），这样密钥不用进 MCP 客户端配置；命令行调试可以用 Node 原生的 `--env-file`：
 
 ```bash
 node --env-file=.env dist/index.js
@@ -303,10 +341,12 @@ npm run inspect      # 用官方 MCP Inspector 交互式调试
 目录结构：
 
 ```
+install.sh            一键安装：依赖 + 编译 + 验证 + 注册 MCP 配置
 bin/
-└── tower-mcp         启动器：自行定位 node，让 MCP 配置里不必写死 node 路径
+└── tower-mcp         启动器：自行定位 node、读取 ~/.tower-mcp/env 凭证
 scripts/
-└── print-mcp-config.mjs  生成可粘贴的 MCP 配置（npm run print-config）
+├── print-mcp-config.mjs  生成可粘贴的 MCP 配置（npm run print-config）
+└── register-mcp.mjs      安全合并 MCP 配置（会备份，只动自己的条目）
 src/
 ├── index.ts          服务入口（stdio 传输）
 ├── auth-cli.ts       OAuth 授权助手
