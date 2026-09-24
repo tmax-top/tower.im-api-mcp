@@ -26,14 +26,14 @@
 
 1. 进入你的 Tower 团队，点击左上角**团队名称**
 2. 选择**应用中心** → **Tower API** → **创建新应用**
-3. 填写名称和回调地址，Scopes 留空
-
-回调地址按你要用的授权模式填：
-
-- 用本地回调（推荐）：`http://localhost:3000/callback`
-- 用 oob 模式：`urn:ietf:wg:oauth:2.0:oob`
-
+3. 填写名称和**回调地址**，Scopes 留空
 4. 创建成功后记下**应用 ID**（`client_id`）和**私钥**（`client_secret`）
+
+**回调地址填 `urn:ietf:wg:oauth:2.0:oob`。**
+
+Tower **只接受 https 回调地址**——`http://localhost:3000/callback` 这类地址在创建应用时根本填不进去。所以本机开发直接用 OAuth 标准的 **oob（out-of-band）模式**：授权完成后 Tower 把授权码显示在页面上，你复制粘贴回终端即可，**不需要任何本地回调服务**。
+
+只有当你确实持有 https 回调地址时（例如用内网穿透把域名映射到本机端口），才填那个地址，并用 `npm run auth -- --local --redirect-uri <你的地址>`。
 
 > 私钥等同于密码，不要提交到代码仓库，也不要写进任何客户端代码。
 
@@ -54,13 +54,20 @@ export TOWER_CLIENT_SECRET=你的私钥
 npm run auth
 ```
 
-浏览器会打开 Tower 授权页，同意后授权码会自动回传，令牌写入 `~/.tower-mcp/token.json`。
+浏览器会打开 Tower 授权页，同意后**页面会显示一串授权码**，复制粘贴回终端即可。令牌写入 `~/.tower-mcp/token.json`，之后服务会自动刷新，不用反复授权。
 
-如果不想配回调地址，改用 oob 模式，授权完成后手动粘贴页面上的授权码：
-
-```bash
-npm run auth -- --oob
-```
+> **遇到 `The redirect uri included is not valid.`？**
+>
+> 说明本次使用的回调地址不在这个 Tower 应用的登记列表里。注意 Tower **只接受 https**，
+> `http://localhost` 一定不行——CLI 会在发起授权前就拦下 http 地址并给出提示，
+> 不会让你白跑一趟浏览器。
+>
+> 用默认的 oob 模式（`npm run auth`，不加任何参数）就不存在这个问题：
+> 只要创建应用时回调地址填的是 `urn:ietf:wg:oauth:2.0:oob` 即可。
+>
+> 另一个坑：Tower 是**登录之后**才校验 `redirect_uri` 的，所以报错只会出现在浏览器页面里，
+> CLI 收不到任何回调，只能一直等到 5 分钟超时。看到浏览器报错时按 Ctrl+C 终止即可，不必等。
+> 超时后 CLI 也会打印这段排查提示。
 
 账号开了两步验证时会额外要一次验证码，脚本会提示。
 
