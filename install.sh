@@ -423,10 +423,10 @@ else
     fi
   else
     item '待办' '运行 npm run labels:sync 建立标签映射'
-    printf '\n  手动步骤（详见 README 的「标签」一节）：\n'
-    printf '    1. 浏览器打开 Tower → F12 → Network → 任一请求 → 复制 Cookie 整行\n'
-    printf '    2. printf %%s\\n "<cookie>" > %s && chmod 600 %s\n' "$COOKIE_FILE" "$COOKIE_FILE"
-    printf '    3. cd "%s" && npm run labels:sync\n' "$PROJECT_DIR"
+    printf '\n  它会提示你粘贴一份浏览器 cookie（详见 README 的「标签」一节）：\n'
+    printf '    cd "%s" && npm run labels:sync\n' "$PROJECT_DIR"
+    printf '  cookie 取法：浏览器打开 Tower → F12 → Network → 任一请求 →\n'
+    printf '               Request Headers → 复制 Cookie 那一整行\n'
   fi
 fi
 

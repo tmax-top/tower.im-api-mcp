@@ -21,8 +21,9 @@
  *   TOWER_TEAM_ID          直接指定团队 id，跳过 API 查询
  *   TOWER_LABELS_FILE      输出路径（默认 ~/.tower-mcp/labels.json）
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { createInterface } from 'node:readline/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -53,18 +54,55 @@ function loadEnvFile() {
   }
 }
 
-function readCookie() {
+/**
+ * 取会话 cookie。
+ *
+ * 优先用环境变量和文件；都没有且连着终端时**直接让用户粘贴**。
+ * 之所以要这个交互分支：把 cookie 写在命令行里有两个静默的坑——
+ *   1. 赋值单独一行（`COOKIE=xxx` 换行 `npm run ...`）不会 export，脚本收不到；
+ *   2. cookie 里含 `$o70` 这类片段，用双引号会被 shell 展开成空，cookie 被悄悄改坏。
+ * 粘贴就没有这些问题。
+ */
+async function readCookie() {
   const fromEnv = process.env.TOWER_SESSION_COOKIE?.trim();
   if (fromEnv) return fromEnv;
+
   if (existsSync(cookieFile)) {
     const raw = readFileSync(cookieFile, 'utf8').trim();
     if (raw) {
       // 支持两种写法：整条 Cookie 头，或每行一个 name=value
-      return raw.includes('=') && !raw.includes('\n')
-        ? raw
-        : raw.split('\n').map((l) => l.trim()).filter(Boolean).join('; ');
+      return raw.includes('\n')
+        ? raw.split('\n').map((l) => l.trim()).filter(Boolean).join('; ')
+        : raw;
     }
   }
+
+  if (process.stdin.isTTY) {
+    process.stdout.write(
+      '\n没找到 cookie。直接粘贴到下面就行——比写在命令行里安全，\n' +
+        '不会被 shell 吃掉 $ 开头的片段，也不用操心变量作用域。\n\n' +
+        '取法：浏览器打开 Tower → F12 → Network → 点任一请求 →\n' +
+        '      Request Headers → 复制 Cookie 那一整行的值。\n\n',
+    );
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      const answer = (await rl.question('Cookie: ')).trim();
+      if (answer) {
+        const old = process.umask(0o077);
+        writeFileSync(cookieFile, `${answer}\n`);
+        process.umask(old);
+        chmodSync(cookieFile, 0o600);
+        process.stdout.write(
+          `\n已保存到 ${cookieFile}（权限 600）——以后 npm run labels:sync 直接就能跑。\n` +
+            '等同于登录凭证，别提交到仓库；不想留就删掉这个文件。\n',
+        );
+        return answer;
+      }
+    } finally {
+      rl.close();
+    }
+  }
+
   return null;
 }
 
@@ -108,13 +146,16 @@ function diff(oldList, newList) {
 // ---------------------------------------------------------------- 主流程
 loadEnvFile();
 
-const cookie = readCookie();
+const cookie = await readCookie();
 if (!cookie) {
   console.error(
-    '缺少会话 cookie。该页面需要登录，二选一：\n' +
-      '  · 设环境变量：TOWER_SESSION_COOKIE="_tower2_session=..."\n' +
-      `  · 或写入文件：${cookieFile}（权限 600）\n\n` +
-      'cookie 从浏览器开发者工具里取：打开 Tower 页面 → F12 → Network → 任一请求\n' +
+    '缺少会话 cookie。该页面需要登录，三选一：\n' +
+      '  · 直接重跑一次（连着终端时它会提示你粘贴，最省事）\n' +
+      `  · 写入文件：${cookieFile}（权限 600）\n` +
+      '  · 环境变量：TOWER_SESSION_COOKIE=...  ← 注意两个坑：\n' +
+      '      1) 必须和 npm 命令写在**同一行**，单独一行不会 export；\n' +
+      "      2) 用**单引号**，cookie 里的 $o70 这类片段在双引号下会被 shell 展开成空。\n\n" +
+      'cookie 从浏览器取：打开 Tower 页面 → F12 → Network → 任一请求\n' +
       '→ Request Headers → 复制 Cookie 那一整行。',
   );
   process.exit(1);
@@ -183,7 +224,7 @@ const isFirstRun = previous === null || (previous.labels?.global ?? []).length =
 
 const next = {
   teamId,
-  teamName: previous.teamName ?? null,
+  teamName: previous?.teamName ?? null,
   syncedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
   source: url,
   labels: {

@@ -314,22 +314,34 @@ npm run labels:sync
 它会抓 `https://tower.im/teams/{团队id}/labels/`，解析出全部标签并覆盖本地映射，
 同时打印和上次的差异（新增 / 移除 / 改名）。
 
-该页面**需要登录会话**，所以要先给它一份 cookie，二选一：
+该页面**需要登录会话**，所以要先给它一份 cookie。**最省事的方式是直接跑命令、按提示粘贴**：
 
 ```bash
-# 方式一：环境变量
-TOWER_SESSION_COOKIE='_tower2_session=xxxxx' npm run labels:sync
-
-# 方式二：写文件（权限 600，之后就不用每次传了）
-echo '_tower2_session=xxxxx' > ~/.tower-mcp/cookie
-chmod 600 ~/.tower-mcp/cookie
 npm run labels:sync
+# 没找到 cookie 时会提示你粘贴，粘完自动存到 ~/.tower-mcp/cookie（权限 600），
+# 以后同一条命令直接就能跑。
+```
+
+也可以提前放好：
+
+```bash
+echo '<cookie>' > ~/.tower-mcp/cookie && chmod 600 ~/.tower-mcp/cookie
 ```
 
 cookie 从浏览器取：打开 Tower 任一页面 → F12 → Network → 点任一请求 →
-Request Headers → 复制 `Cookie` 那一整行。
+Request Headers → 复制 `Cookie` 那一整行的值。
 
-> cookie 等同于登录凭证，别提交到仓库。同步完可以删掉文件。
+> **如果一定要用环境变量，注意两个坑**（都是静默失败）：
+>
+> 1. 必须和命令写在**同一行**——`TOWER_SESSION_COOKIE=xxx` 单独一行只是赋值、不会 export；
+> 2. 用**单引号**——cookie 里有 `$o70` 这类片段，双引号下会被 shell 展开成空，cookie 被悄悄改坏。
+>
+> ```bash
+> # 对：同一行 + 单引号
+> TOWER_SESSION_COOKIE='_tower2_session=...' npm run labels:sync
+> ```
+
+cookie 等同于登录凭证，别提交到仓库。同步完可以删掉 `~/.tower-mcp/cookie`，只是下次要再粘一次。
 
 改完映射后**重启 MCP 客户端**即可生效（服务每次启动重新读这个文件）。
 
