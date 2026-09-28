@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { describeOperator, loadIdentity } from '../identity.js';
 import type { TowerClient } from '../tower-client.js';
 import { READ_ONLY, callTool, pagination } from './helpers.js';
 
@@ -57,11 +58,29 @@ export function registerActivityTools(server: McpServer, client: TowerClient): n
     {
       title: '查看授权状态',
       description:
-        '查看当前 Tower 授权的本地状态：用的是哪个账号、access_token 是否还有效、刷新令牌是否配置齐全。' +
+        '查看当前 Tower 授权的本地状态：用的是哪个账号、access_token 是否还有效、刷新令牌是否配置齐全，' +
+        '以及**当前操作人**（安装时选定的成员，与「人」相关的操作默认以他为对象）。' +
         '当其他接口报 401 认证失败时，先用它排查。此工具不发起网络请求。',
       annotations: READ_ONLY,
     },
-    () => callTool(async () => client.describeAuthState()),
+    () =>
+      callTool(async () => {
+        const state = await client.describeAuthState();
+        const identity = loadIdentity();
+        return {
+          ...state,
+          operator: identity
+            ? {
+                memberId: identity.memberId,
+                memberName: identity.memberName,
+                memberEmail: identity.memberEmail,
+                selectedAt: identity.selectedAt,
+                selectedBy: identity.selectedBy ?? null,
+              }
+            : null,
+          operatorNote: describeOperator(),
+        };
+      }),
   );
 
   return 3;

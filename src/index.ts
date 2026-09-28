@@ -8,6 +8,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig } from './config.js';
+import { labelsFileHint } from './labels.js';
 import { registerAllTools } from './tools/index.js';
 import { TowerClient } from './tower-client.js';
 
@@ -33,6 +34,16 @@ const INSTRUCTIONS = `Tower 项目管理工具集。Tower 的资源层级是：�
   且只接受 true。调用前必须先在对话中向用户说明要删除的对象（名称 + id），
   得到用户明确同意后再传 confirm: true。
   用户此前说过要删不算数，每次删除都要重新确认；用户未表态时应先询问，不要替用户决定。
+- **标签**：Tower 的 API 没有标签接口，标签名与数字 id 的对应关系存在本地映射文件里
+  （由 tower_list_labels 读取）。给任务打标签时 **label_ids 可以直接写标签名**
+  （如 label_ids: ["H5"]），比记数字 id 可靠——Tower 对无效 id 是静默忽略的。
+  只有**全局标签**能用；项目标签传进去不会生效，本服务会直接报错拦下。
+  如果本地还没有映射文件，任何带标签的操作都会附带一段同步指引，按它执行一次即可。
+- **当前操作人**：安装时可能选定了某位成员作为「当前操作人」（client_id 往往是管理员的，
+  而使用者是团队成员）。此时 tower_create_todo 不传 assignee_id 会默认指派给他，
+  tower_list_member_todos 不传 member_id 会默认查他。想知道是谁、或没选定，
+  调用 tower_get_auth_state 看 operator 字段。注意：API 的认证身份仍是 client_id 的账号，
+  任务的 creator 由令牌决定、改不了；操作人能影响的是 assignee 这类显式接受成员 id 的字段。
 - 遇到 401 认证失败时，调用 tower_get_auth_state 查看授权状态。`;
 
 async function main(): Promise<void> {
@@ -53,6 +64,13 @@ async function main(): Promise<void> {
     `[${SERVER_NAME}] v${SERVER_VERSION} 已启动，注册 ${toolCount} 个工具；` +
       `API 地址 ${config.baseUrl}\n`,
   );
+
+  // 启动时检查标签映射。缺了不影响启动（标签只是任务的一个可选字段），
+  // 但要在日志里说清楚，免得用户「打了标签没报错却也没生效」时找不到原因。
+  const labelsHint = labelsFileHint();
+  if (labelsHint) {
+    process.stderr.write(`[${SERVER_NAME}] ${labelsHint}\n`);
+  }
 }
 
 main().catch((err: unknown) => {

@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { TowerClient } from '../tower-client.js';
 import { registerActivityTools } from './activity.js';
+import { registerLabelTools } from './label.js';
 import { registerMemberTools } from './member.js';
 import { registerProjectTools } from './project.js';
 import { registerTeamTools } from './team.js';
@@ -20,6 +21,7 @@ const REGISTRARS: Registrar[] = [
   registerProjectTools,
   registerTodolistTools,
   registerTodoTools,
+  registerLabelTools,
   registerTopicTools,
   registerUploadTools,
   registerTimeLogTools,

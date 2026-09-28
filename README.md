@@ -2,7 +2,7 @@
 
 把 [Tower](https://tower.im) 项目管理 API 封装成 [MCP](https://modelcontextprotocol.io) 服务，让 AI 助手能直接读写你的 Tower 团队、项目、任务、讨论、文件和工时。
 
-依据官方接口文档 [docs.tower.im](https://docs.tower.im/) 实现，覆盖文档中全部 12 个模块，共 **54 个工具**。
+依据官方接口文档 [docs.tower.im](https://docs.tower.im/) 实现，覆盖文档中全部 12 个模块，共 **55 个工具**。
 
 ---
 
@@ -17,6 +17,8 @@
 | 文件直传 | 一个工具完成「申请签名 → 上传阿里云 OSS → 挂到项目文件」全流程 |
 | 凭证持久化 | 令牌落盘（权限 600），重启服务不用重新授权 |
 | 删除二次确认 | 所有删除类工具强制要求 `confirm: true`，且限定为字面量 `true`，模型无法绕过——必须先取得用户明确同意 |
+| 标签可写可查 | Tower 的 API 没有标签接口，这里用「网页端同步 + 本地映射」补齐：打标签时可以直接写标签名，工具会查表转成 id |
+| 可指定操作人 | `client_id` 是管理员的、使用者是测试人员时，安装时选定一名成员作为「当前操作人」，新建任务默认指派给他、查任务默认查他 |
 
 ---
 
@@ -30,7 +32,14 @@
 curl -fsSL https://raw.githubusercontent.com/tmax-top/tower.im-api-mcp/master/install.sh | sh
 ```
 
-它会先把源码拉下来（默认放到 `~/.tower-mcp/src`），然后依次完成：装依赖 → 编译 → 冒烟验证 → 把 `tower` 写进 MCP 配置。过程中会询问你的 `client_id` / `client_secret`，也可以提前用环境变量传入。
+它会先把源码拉下来（默认放到 `~/.tower-mcp/src`），然后依次完成：装依赖 → 编译 → 冒烟验证 → 把 `tower` 写进 MCP 配置 → OAuth 授权 → **选定当前操作人** → **同步标签映射**。过程中会询问你的 `client_id` / `client_secret`，也可以提前用环境变量传入。
+
+后两步各需要一点额外输入：
+
+- **选定当前操作人**（可选）—— 从团队里选一名成员，之后新建任务默认指派给他。不选就按 `client_id` 的账号处理。详见「[当前操作人](#当前操作人)」。
+- **同步标签映射** —— 需要一份浏览器 cookie，脚本会引导你粘贴，粘完自动存到 `~/.tower-mcp/cookie`（权限 600），以后 `npm run labels:sync` 就是一条命令的事。详见「[标签](#标签)」。
+
+两步都可以跳过，跳过后任何相关操作都会提示你怎么补上。
 
 **结束时会把填好绝对路径的配置直接打印出来**，需要手动接入的客户端（Claude Desktop / Cursor / Cline 等）复制粘贴即可，不用自己去拼路径：
 
@@ -49,6 +58,9 @@ curl -fsSL https://raw.githubusercontent.com/tmax-top/tower.im-api-mcp/master/in
 | `./install.sh --uninstall` | 从 MCP 配置里移除 `tower` 条目 |
 
 在线安装时可用 `TOWER_MCP_DIR` 指定源码位置、`TOWER_MCP_BRANCH` 指定分支。重复运行会自动 `git pull` 到最新——但**如果你的克隆里有未提交的改动，它会跳过更新、直接用现有版本**，不会 `reset --hard` 掉你的东西。
+
+跳过标签同步：`TOWER_MCP_SKIP_LABELS=1 ./install.sh`；已经有 cookie 的话直接 `TOWER_SESSION_COOKIE='...' ./install.sh`。
+跳过操作人选择：`TOWER_MCP_SKIP_MEMBER=1 ./install.sh`；想非交互指定：`TOWER_MEMBER_ID=<成员id> ./install.sh`。
 
 可用的环境变量：`TOWER_CLIENT_ID` / `TOWER_CLIENT_SECRET`（凭证）、`TOWER_MCP_CONFIG`（配置文件路径，默认 `~/.workbuddy-ai/mcp.json`，即 WorkBuddy 的配置；**接入 Claude Desktop / Cursor 等其他客户端时把它指到对方配置文件即可**，详见下文「[接入其他 MCP 客户端](#接入其他-mcp-客户端claude-desktop--cursor--cline-等)」）、`TOWER_MCP_SKIP_AUTH=1`（跳过授权提示）、`TOWER_MCP_FORCE_INSTALL=1`（强制重装依赖）。
 
@@ -222,6 +234,138 @@ TOWER_MCP_CONFIG="$HOME/.cursor/mcp.json" ./install.sh
 
 > 凭证统一放在 `~/.tower-mcp/env`，所以同一份安装可以同时注册进多个客户端，互不影响。
 > OAuth 授权（`npm run auth`）也只跑一次，与用哪个客户端无关。
+
+---
+
+## 当前操作人
+
+安装时填的 `client_id` / `client_secret` 往往是**管理员**的 OAuth 应用凭证，而实际使用这套 MCP 的可能是团队成员（比如测试人员）。
+
+所以安装时会让你从团队里**选一名成员**作为「当前操作人」，记到 `~/.tower-mcp/identity.json`。之后：
+
+| 操作 | 行为 |
+| --- | --- |
+| `tower_create_todo` 不传 `assignee_id` | 默认指派给当前操作人 |
+| `tower_create_todo` 传 `assignee_id: ""` | 明确不指派（覆盖默认） |
+| `tower_list_member_todos` 不传 `member_id` | 默认查当前操作人的任务 |
+| `tower_get_auth_state` | 返回里带 `operator` 字段，可见当前是谁 |
+
+**不选也可以**——所有操作仍按 `client_id` 对应的账号处理，跟以前完全一样。
+
+### 改 / 取消
+
+```bash
+npm run select-member                    # 重新选（列出全部成员，输序号）
+npm run select-member -- --clear         # 取消，回到按 client_id 账号处理
+TOWER_MEMBER_ID=<成员id> npm run select-member   # 非交互直接指定
+```
+
+改完**重启 MCP 客户端**生效。
+
+### 能影响什么、不能影响什么
+
+这里只是给**显式接受成员 id 的字段**（`assignee_id`、`member_id`）提供默认值。
+
+**API 的认证身份仍然是 `client_id` 那个账号，改不了。** 具体说：
+
+- 任务的 `creator` 由令牌决定 → 永远是 `client_id` 的账号
+- 通知、动态的归属同理
+- 能改的是 `assignee` 这类**由请求参数指定**的字段
+
+如果你的场景需要「任务确实以测试人员的身份创建」，那得给每位测试人员各自建一个 Tower 应用（各自的 `client_id`），而不是共用管理员的。
+
+### 一台机器接多个测试人员
+
+在 MCP 配置条目里加 `env` 即可按条目区分身份：
+
+```json
+"tester-a": {
+  "type": "stdio",
+  "command": "/路径/bin/tower-mcp",
+  "args": [],
+  "env": { "TOWER_MEMBER_ID": "成员idA" }
+}
+```
+
+`TOWER_MEMBER_ID` 的优先级高于身份文件。
+
+---
+
+## 标签
+
+Tower 的公开 API **没有任何标签接口**——`/labels`、`/teams/{id}/labels`、`/todo_labels`
+等十几个候选全部 404，任务响应里也只有标签名、没有 id。而写任务用的 `label_ids`
+需要的是**百万级的数字 id**（如 `4732007` 对应 `CMS`）。
+
+所以本服务用「网页端同步 + 本地映射」来补齐：
+
+- `tower_list_labels` —— 查标签及数字 id
+- `tower_create_todo` / `tower_update_todo` 的 `label_ids` —— **可以直接写标签名**，
+  工具会查表转成 id，不用记数字
+
+映射存在 `~/.tower-mcp/labels.json`（不放仓库里，因为标签名是团队内部数据）。
+
+### 同步（标签有增减时跑一次）
+
+```bash
+npm run labels:sync
+```
+
+它会抓 `https://tower.im/teams/{团队id}/labels/`，解析出全部标签并覆盖本地映射，
+同时打印和上次的差异（新增 / 移除 / 改名）。
+
+该页面**需要登录会话**，所以要先给它一份 cookie，二选一：
+
+```bash
+# 方式一：环境变量
+TOWER_SESSION_COOKIE='_tower2_session=xxxxx' npm run labels:sync
+
+# 方式二：写文件（权限 600，之后就不用每次传了）
+echo '_tower2_session=xxxxx' > ~/.tower-mcp/cookie
+chmod 600 ~/.tower-mcp/cookie
+npm run labels:sync
+```
+
+cookie 从浏览器取：打开 Tower 任一页面 → F12 → Network → 点任一请求 →
+Request Headers → 复制 `Cookie` 那一整行。
+
+> cookie 等同于登录凭证，别提交到仓库。同步完可以删掉文件。
+
+改完映射后**重启 MCP 客户端**即可生效（服务每次启动重新读这个文件）。
+
+### 还没同步会怎样
+
+不会静默失败，三处都会提示：
+
+| 时机 | 表现 |
+| --- | --- |
+| 服务启动 | stderr 打一条警告，写明缺哪个文件、该执行什么命令 |
+| 调用 `tower_list_labels` | 报错并给出**可直接复制**的命令（含项目绝对路径） |
+| 带 `label_ids` 创建/更新任务 | 用**标签名**会报错（无法解析）；用**数字 id** 仍放行，但结果末尾附上同步指引 |
+
+提示长这样：
+
+```
+⚠️ 还没有标签映射文件：/Users/xxx/.tower-mcp/labels.json
+Tower 的公开 API 不提供标签接口，标签名和数字 id 的对应关系只能从网页端同步一次。
+请让用户在项目目录执行：
+  cd "/path/to/tower-mcp" && npm run labels:sync
+（需要先从浏览器复制一份会话 cookie，README 的「标签」一节有详细步骤）
+```
+
+### 两个必须知道的点
+
+**1. 只有「全局标签」能用 API 设置。** 网页端那个页面分两个区：
+
+| 分区 | 能否用 `label_ids` 设置 |
+| --- | --- |
+| 全局标签（`team-label-list`） | ✅ |
+| 项目标签（`project-label-list`） | ❌ 传进去返回 HTTP 200 但**什么都不发生** |
+
+本服务对项目标签会**直接报错**，不会让它静默失败。
+
+**2. 传错 id 同样是静默失败。** 所以推荐直接写标签名——名字对不上会报错并列出候选，
+而传错数字 id Tower 会一声不吭地忽略。
 
 ---
 
@@ -403,8 +547,10 @@ confirm=true   -> 通过校验，正常执行
 ```bash
 npm run build        # 编译
 npm run watch        # 增量编译
-npm test             # 跑测试（40 个用例）
+npm test             # 跑测试（63 个用例）
 npm run print-config # 打印可直接粘贴的 MCP 配置（自动填好绝对路径）
+npm run labels:sync  # 从网页端同步标签 id 映射（需要会话 cookie，见下）
+npm run select-member # 选定/更换「当前操作人」（--clear 取消）
 npm run auth         # OAuth 授权
 npm run inspect      # 用官方 MCP Inspector 交互式调试
 ```
@@ -419,11 +565,15 @@ bin/
 └── tower-mcp         启动器：自行定位 node、读取 ~/.tower-mcp/env 凭证
 scripts/
 ├── print-mcp-config.mjs  生成可粘贴的 MCP 配置（npm run print-config）
+├── sync-labels.mjs       从网页端同步标签 id 映射（npm run labels:sync）
+├── select-member.mjs     选定「当前操作人」（npm run select-member）
 └── register-mcp.mjs      安全合并 MCP 配置（会备份，只动自己的条目）
 src/
 ├── index.ts          服务入口（stdio 传输）
 ├── auth-cli.ts       OAuth 授权助手
 ├── auth-redirect.ts  授权回调方式决策（oob / 本地回调）
+├── labels.ts         标签映射的读取与解析（名字 → id）
+├── identity.ts       「当前操作人」的读取与解析
 ├── config.ts         环境变量解析
 ├── tower-client.ts   HTTP 客户端 + 令牌管理
 ├── jsonapi.ts        JSON:API 展平 + HTML 清洗

@@ -1,5 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { currentMemberId, operatorDefaultNote } from '../identity.js';
+import { labelsFileHint, resolveLabelRefs } from '../labels.js';
 import type { TowerClient } from '../tower-client.js';
 import {
   DELETE_CONFIRM,
@@ -7,6 +9,7 @@ import {
   PAGE_DESC,
   READ_ONLY,
   WRITE,
+  type ToolTextResult,
   callTool,
   omitUndefined,
   pagination,
@@ -19,6 +22,39 @@ const CUSTOM_FIELDS_DESC =
   '可在任务详情返回的 custom_field_value.custom_fields 里看到每个字段的 key 与可选取值。';
 
 const DUE_DESC = '截止时间，推荐格式 2026-09-30 或 2026-09-30T18:00（不需要带时区）';
+
+const LABEL_DESC =
+  '标签。可以传数字 id，也可以直接传标签名（会自动查表转成 id，名字不区分大小写）。' +
+  '**只有全局标签能用**——Tower 对项目标签会返回 200 但什么也不做（静默失败），' +
+  '所以这里遇到项目标签会直接报错，不会让它悄悄失败。' +
+  '可用标签见 tower_list_labels；传空数组 [] 表示清除全部标签。';
+
+/** 标签参数：数字 id 或标签名都接受，统一在解析层转成 id */
+const LABEL_REFS = z.array(z.union([z.number(), z.string()]));
+
+/**
+ * 用了标签、但本地还没有映射文件时，在结果末尾补一段同步指引。
+ *
+ * 为什么需要：传**数字 id** 时不需要映射文件（可能确实有效），所以不能直接拦；
+ * 但 Tower 对无效 id 是静默忽略的，用户会以为打上了。这里至少把「无法校验」
+ * 这件事说出来，并给出怎么把映射建起来。
+ * 传**标签名**的情况不用管——resolveLabelRefs 已经会带着同样的指引报错。
+ */
+async function withLabelsHint(
+  labelRefs: readonly (number | string)[] | undefined,
+  run: () => Promise<ToolTextResult>,
+): Promise<ToolTextResult> {
+  const result = await run();
+  if (!labelRefs || labelRefs.length === 0) return result;
+
+  const hint = labelsFileHint();
+  if (!hint) return result;
+
+  return {
+    ...result,
+    content: result.content.map((c) => ({ ...c, text: `${c.text}\n\n${hint}` })),
+  };
+}
 
 export function registerTodoTools(server: McpServer, client: TowerClient): number {
   server.registerTool(
@@ -85,21 +121,36 @@ export function registerTodoTools(server: McpServer, client: TowerClient): numbe
         todolist_id: z.string().describe('任务清单 id'),
         content: z.string().describe('任务标题'),
         desc: z.string().optional().describe('任务描述，支持 HTML 或纯文本'),
-        assignee_id: z.string().optional().describe('负责人成员 id，可在 tower_list_team_members 里获取'),
+        assignee_id: z
+          .string()
+          .optional()
+          .describe(
+            `负责人成员 id，可在 tower_list_team_members 里获取${operatorDefaultNote('assignee_id')}；` +
+              '传空字符串表示明确不指派',
+          ),
         due_at: z.string().optional().describe(DUE_DESC),
         start_at: z.string().optional().describe('开始时间，格式同 due_at'),
         priority: PRIORITY.optional().describe('优先级，默认 normal'),
         parent_id: z.string().optional().describe('父任务 id，用于创建子任务'),
-        label_ids: z.array(z.number()).optional().describe('标签 id 列表'),
+        label_ids: LABEL_REFS.optional().describe(LABEL_DESC),
         attfile_guids: z.array(z.string()).optional().describe('已上传附件的 guid 列表'),
         custom_fields: z.record(z.any()).optional().describe(CUSTOM_FIELDS_DESC),
       },
       annotations: WRITE,
     },
-    ({ todolist_id, custom_fields, ...rest }) =>
-      callTool(() =>
-        client.post(`/todolists/${todolist_id}/todos`, {
-          todo: omitUndefined({ ...rest, ...(custom_fields ?? {}) }),
+    ({ todolist_id, custom_fields, label_ids, assignee_id, ...rest }) =>
+      withLabelsHint(label_ids, () =>
+        callTool(() => {
+          // 不传 assignee_id 时默认指派给「当前操作人」；显式传空字符串才是「不指派」
+          const assignee = assignee_id !== undefined ? assignee_id : (currentMemberId() ?? undefined);
+          return client.post(`/todolists/${todolist_id}/todos`, {
+            todo: omitUndefined({
+              ...rest,
+              assignee_id: assignee,
+              ...(custom_fields ?? {}),
+              ...(label_ids ? { label_ids: resolveLabelRefs(label_ids) } : {}),
+            }),
+          });
         }),
       ),
   );
@@ -119,17 +170,23 @@ export function registerTodoTools(server: McpServer, client: TowerClient): numbe
         due_at: z.string().optional().describe(DUE_DESC),
         start_at: z.string().optional().describe('开始时间'),
         priority: PRIORITY.optional().describe('优先级'),
-        label_ids: z.array(z.number()).optional().describe('标签 id 列表'),
+        label_ids: LABEL_REFS.optional().describe(LABEL_DESC),
         attfile_guids: z.array(z.string()).optional().describe('附件 guid 列表'),
         custom_fields: z.record(z.any()).optional().describe(CUSTOM_FIELDS_DESC),
       },
       annotations: WRITE,
     },
-    ({ todo_id, custom_fields, ...rest }) =>
-      callTool(() =>
-        client.patch(`/todos/${todo_id}`, {
-          todo: omitUndefined({ ...rest, ...(custom_fields ?? {}) }),
-        }),
+    ({ todo_id, custom_fields, label_ids, ...rest }) =>
+      withLabelsHint(label_ids, () =>
+        callTool(() =>
+          client.patch(`/todos/${todo_id}`, {
+            todo: omitUndefined({
+              ...rest,
+              ...(custom_fields ?? {}),
+              ...(label_ids ? { label_ids: resolveLabelRefs(label_ids) } : {}),
+            }),
+          }),
+        ),
       ),
   );
 

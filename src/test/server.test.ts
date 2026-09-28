@@ -9,7 +9,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 const here = dirname(fileURLToPath(import.meta.url));
 
 /** 期望注册的工具总数——改动工具集时同步更新，作为回归基线 */
-const EXPECTED_TOOL_COUNT = 54;
+const EXPECTED_TOOL_COUNT = 55;
 
 /** 必须做二次确认的删除类工具。新增删除工具时要一并加进来 */
 const DELETE_TOOLS = [

@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { currentMemberId, operatorDefaultNote } from '../identity.js';
 import type { TowerClient } from '../tower-client.js';
 import { PAGE_DESC, READ_ONLY, SIZE_DESC, callTool, pagination } from './helpers.js';
 
@@ -39,9 +40,10 @@ export function registerMemberTools(server: McpServer, client: TowerClient): num
     {
       title: '获取成员的任务',
       description:
-        '查询某个成员名下（被指派 / 由他创建）的未完成或已完成任务。常用于回答「我手上还有哪些活」「小王这周做完了什么」。',
+        '查询某个成员名下（被指派 / 由他创建）的未完成或已完成任务。常用于回答「我手上还有哪些活」「小王这周做完了什么」。' +
+        `不传 member_id 时默认查当前操作人（见 tower_get_auth_state 里的 operator 字段）。`,
       inputSchema: {
-        member_id: z.string().describe('成员 id'),
+        member_id: z.string().optional().describe(`成员 id${operatorDefaultNote('member_id')}`),
         scope: z
           .enum(['assigned', 'created'])
           .describe('assigned = 指派给他的任务；created = 由他创建的任务'),
@@ -58,12 +60,19 @@ export function registerMemberTools(server: McpServer, client: TowerClient): num
       annotations: READ_ONLY,
     },
     ({ member_id, scope, status, box, page }) =>
-      callTool(() =>
-        client.get(`/members/${member_id}/${scope}_${status}_todos`, {
+      callTool(() => {
+        const target = member_id || currentMemberId();
+        if (!target) {
+          throw new Error(
+            '需要指定 member_id。也可以先选定「当前操作人」，之后不传 member_id 就默认查他：\n' +
+              '  npm run select-member',
+          );
+        }
+        return client.get(`/members/${target}/${scope}_${status}_todos`, {
           ...pagination(page),
           ...(box !== undefined ? { box } : {}),
-        }),
-      ),
+        });
+      }),
   );
 
   return 3;

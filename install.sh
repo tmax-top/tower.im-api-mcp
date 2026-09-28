@@ -8,7 +8,8 @@
 # 已经克隆了源码：
 #   ./install.sh
 #
-# 完整流程：装依赖 -> 编译 -> 冒烟验证 -> 注册到 MCP 客户端配置（可选授权）。
+# 完整流程：装依赖 -> 编译 -> 冒烟验证 -> 注册到 MCP 客户端配置 -> 授权
+#           -> 选定当前操作人 -> 同步标签映射。
 #
 #   ./install.sh                  完整安装
 #   ./install.sh --no-register    只装依赖和编译，不改 MCP 配置
@@ -17,13 +18,20 @@
 #
 # 环境变量：
 #   TOWER_CLIENT_ID, TOWER_CLIENT_SECRET   Tower 应用凭证；不设则交互式询问
+#   TOWER_SESSION_COOKIE                   Tower 网页端会话 cookie，用于同步标签映射
+#   TOWER_MEMBER_ID                        直接指定「当前操作人」的成员 id，跳过交互
 #   TOWER_MCP_DIR                          在线安装时源码放哪（默认 ~/.tower-mcp/src）
 #   TOWER_MCP_REPO                         GitHub 仓库（默认 tmax-top/tower.im-api-mcp）
 #   TOWER_MCP_BRANCH                       分支（默认 master）
 #   TOWER_MCP_CONFIG                       MCP 配置文件（默认 ~/.workbuddy-ai/mcp.json）
 #   TOWER_MCP_NAME                         MCP 条目名（默认 tower）
 #   TOWER_TOKEN_FILE                       令牌文件（默认 ~/.tower-mcp/token.json）
+#   TOWER_LABELS_FILE                      标签映射文件（默认 ~/.tower-mcp/labels.json）
+#   TOWER_IDENTITY_FILE                    当前操作人文件（默认 ~/.tower-mcp/identity.json）
+#   TOWER_COOKIE_FILE                      cookie 存放位置（默认 ~/.tower-mcp/cookie）
 #   TOWER_MCP_SKIP_AUTH=1                  跳过授权提示
+#   TOWER_MCP_SKIP_MEMBER=1                跳过「当前操作人」选择
+#   TOWER_MCP_SKIP_LABELS=1                跳过标签映射同步
 #   TOWER_MCP_FORCE_INSTALL=1              即使 node_modules 已存在也重装依赖
 #
 set -eu
@@ -63,14 +71,30 @@ tower-mcp 安装脚本
 
 环境变量：
   TOWER_CLIENT_ID, TOWER_CLIENT_SECRET   Tower 应用凭证；不设则交互式询问
+  TOWER_SESSION_COOKIE                   Tower 网页端会话 cookie，用于同步标签映射
+  TOWER_MEMBER_ID                        直接指定「当前操作人」的成员 id，跳过交互
   TOWER_MCP_DIR                          在线安装时源码放哪，默认 ~/.tower-mcp/src
   TOWER_MCP_REPO                         GitHub 仓库，默认 tmax-top/tower.im-api-mcp
   TOWER_MCP_BRANCH                       分支，默认 master
   TOWER_MCP_CONFIG                       MCP 配置文件，默认 ~/.workbuddy-ai/mcp.json
   TOWER_MCP_NAME                         MCP 条目名，默认 tower
   TOWER_TOKEN_FILE                       令牌文件，默认 ~/.tower-mcp/token.json
+  TOWER_LABELS_FILE                      标签映射文件，默认 ~/.tower-mcp/labels.json
+  TOWER_IDENTITY_FILE                    当前操作人文件，默认 ~/.tower-mcp/identity.json
+  TOWER_COOKIE_FILE                      cookie 存放位置，默认 ~/.tower-mcp/cookie
   TOWER_MCP_SKIP_AUTH=1                  跳过授权提示
+  TOWER_MCP_SKIP_MEMBER=1                跳过「当前操作人」选择
+  TOWER_MCP_SKIP_LABELS=1                跳过标签映射同步
   TOWER_MCP_FORCE_INSTALL=1              强制重装依赖
+
+关于当前操作人：安装时填的 client_id 往往是管理员的，而实际使用者可能是团队成员
+（如测试人员）。安装脚本会让你从团队里选一名成员作为「当前操作人」——之后新建任务
+不传 assignee_id 会默认指派给他，查成员任务不传 member_id 也默认查他。不选也行，
+所有操作仍按 client_id 对应的账号处理。随时可改：npm run select-member
+
+关于标签：Tower 的公开 API 没有标签接口，标签名与数字 id 的对应关系需要从
+网页端同步一次（脚本会引导你粘贴一份浏览器 cookie）。同步后就能直接写标签名
+打标签，例如 label_ids: ["H5"]。标签有增减时跑 npm run labels:sync 刷新即可。
 EOF
 }
 
@@ -103,7 +127,7 @@ for arg in "$@"; do
       usage
       exit 0
       ;;
-    *) die "未知参数 $arg（用 --help 查看用法）" ;;
+    *) die "未知参数 ${arg}（用 --help 查看用法）" ;;
   esac
 done
 
@@ -148,7 +172,7 @@ ensure_source() {
     # 失败时把 git 自己的报错打出来，否则「克隆失败」这四个字帮不上任何忙
     if ! _clone_out=$(git clone --depth 1 --branch "$BRANCH" "$CLONE_URL" "$SOURCE_DIR" 2>&1); then
       printf '%s\n' "$_clone_out" | sed 's/^/    /' >&2
-      die "克隆失败：$CLONE_URL（分支 $BRANCH）"
+      die "克隆失败：${CLONE_URL}（分支 ${BRANCH}）"
     fi
     item '已克隆' "$CLONE_URL ($BRANCH)"
     return 0
@@ -326,12 +350,98 @@ else
   esac
 fi
 
+# ---------------------------------------------------------------- 当前操作人
+IDENTITY_FILE="${TOWER_IDENTITY_FILE:-$HOME/.tower-mcp/identity.json}"
+
+printf '\n==> 当前操作人\n'
+if [ -f "$IDENTITY_FILE" ]; then
+  item '跳过' "已选定 $IDENTITY_FILE"
+elif [ "${TOWER_MCP_SKIP_MEMBER:-0}" = "1" ]; then
+  item '待办' '运行 npm run select-member 选定操作人'
+else
+  printf '  安装时填的 client_id 往往是管理员的，但实际使用者可能是团队成员（如测试人员）。\n'
+  printf '  选定一名成员作为「当前操作人」后：新建任务不传 assignee_id 会默认指派给他，\n'
+  printf '  查成员任务不传 member_id 也默认查他。\n'
+  printf '  不选也可以——所有操作仍按 client_id 对应的账号处理。\n\n'
+
+  if [ -t 0 ]; then
+    printf '  现在选定操作人吗？[Y/n] '
+    read -r ANSWER || true
+    case "$ANSWER" in
+      n | N | no | NO | No)
+        item '跳过' '之后可随时运行 npm run select-member 选定'
+        ;;
+      *)
+        if (cd "$PROJECT_DIR" && "$NPM" run select-member); then
+          item '完成' '操作人已记录'
+        else
+          item '失败' '可稍后重试：npm run select-member'
+        fi
+        ;;
+    esac
+  else
+    item '待办' '运行 npm run select-member 选定操作人'
+  fi
+fi
+
+# ---------------------------------------------------------------- 标签映射
+LABELS_FILE="${TOWER_LABELS_FILE:-$HOME/.tower-mcp/labels.json}"
+COOKIE_FILE="${TOWER_COOKIE_FILE:-$HOME/.tower-mcp/cookie}"
+
+printf '\n==> 标签映射\n'
+if [ -f "$LABELS_FILE" ]; then
+  item '跳过' "已存在 $LABELS_FILE"
+elif [ "${TOWER_MCP_SKIP_LABELS:-0}" = "1" ]; then
+  item '待办' '运行 npm run labels:sync 建立标签映射'
+else
+  printf '  Tower 的公开 API 不提供标签接口，任务响应里也只有标签名、没有 id。\n'
+  printf '  所以「标签名 ↔ 数字 id」的对应关系需要从网页端同步一次。\n'
+  printf '  同步后就能直接写标签名打标签（label_ids: ["H5"]），不用记数字。\n\n'
+
+  COOKIE="${TOWER_SESSION_COOKIE:-}"
+  if [ -z "$COOKIE" ] && [ -f "$COOKIE_FILE" ]; then
+    COOKIE=$(cat "$COOKIE_FILE" 2>/dev/null || true)
+  fi
+
+  if [ -z "$COOKIE" ] && [ -t 0 ]; then
+    printf '  粘贴浏览器里的 Cookie（F12 → Network → 任一请求 → Request Headers → Cookie）：\n  '
+    read -r COOKIE || true
+  fi
+
+  if [ -n "$COOKIE" ]; then
+    # 存下来，以后 npm run labels:sync 就是一条命令的事
+    _old_umask=$(umask)
+    umask 077
+    printf '%s\n' "$COOKIE" >"$COOKIE_FILE"
+    umask "$_old_umask"
+    item '已保存' "${COOKIE_FILE}（权限 600，等同于登录凭证，别提交到仓库）"
+
+    if (cd "$PROJECT_DIR" && TOWER_SESSION_COOKIE="$COOKIE" "$NPM" run labels:sync); then
+      item '完成' '标签映射已建立'
+    else
+      item '失败' '同步没成功，稍后可重试：npm run labels:sync'
+    fi
+  else
+    item '待办' '运行 npm run labels:sync 建立标签映射'
+    printf '\n  手动步骤（详见 README 的「标签」一节）：\n'
+    printf '    1. 浏览器打开 Tower → F12 → Network → 任一请求 → 复制 Cookie 整行\n'
+    printf '    2. printf %%s\\n "<cookie>" > %s && chmod 600 %s\n' "$COOKIE_FILE" "$COOKIE_FILE"
+    printf '    3. cd "%s" && npm run labels:sync\n' "$PROJECT_DIR"
+  fi
+fi
+
 # ---------------------------------------------------------------- 完成
 CONFIG_PATH="${TOWER_MCP_CONFIG:-$HOME/.workbuddy-ai/mcp.json}"
 
 printf '\n完成。\n\n'
 item '服务入口' "$PROJECT_DIR/bin/tower-mcp"
 item '令牌文件' "$TOKEN_FILE"
+item '标签映射' "$LABELS_FILE"
+if [ -f "$IDENTITY_FILE" ]; then
+  item '当前操作人' "$IDENTITY_FILE"
+else
+  item '当前操作人' '未选定（按 client_id 的账号处理）'
+fi
 if [ "$REGISTER" -eq 1 ]; then
   item 'MCP 配置' "$CONFIG_PATH"
 else
@@ -371,3 +481,4 @@ case "$CONFIG_PATH" in
 esac
 printf '  2. 然后问 AI：「列出我的 Tower 团队」。\n'
 printf '  3. 完整配置（含备选写法）随时可用：npm run print-config\n'
+printf '  4. 标签有增减时刷新映射：npm run labels:sync（一键，cookie 已存好）\n'
