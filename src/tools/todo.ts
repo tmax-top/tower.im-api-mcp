@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { HTML_FIELD_DESC, htmlProtectionNote, protectHtmlField, protectUnknownTags } from '../html.js';
 import { currentMemberId, operatorDefaultNote } from '../identity.js';
 import { labelsFileHint, resolveLabelRefs } from '../labels.js';
 import type { TowerClient } from '../tower-client.js';
@@ -13,6 +14,7 @@ import {
   callTool,
   omitUndefined,
   pagination,
+  withNote,
 } from './helpers.js';
 
 const PRIORITY = z.enum(['highest', 'higher', 'normal', 'lower']);
@@ -44,16 +46,18 @@ async function withLabelsHint(
   labelRefs: readonly (number | string)[] | undefined,
   run: () => Promise<ToolTextResult>,
 ): Promise<ToolTextResult> {
-  const result = await run();
-  if (!labelRefs || labelRefs.length === 0) return result;
+  if (!labelRefs || labelRefs.length === 0) return run();
+  return withNote(labelsFileHint(), run);
+}
 
-  const hint = labelsFileHint();
-  if (!hint) return result;
-
-  return {
-    ...result,
-    content: result.content.map((c) => ({ ...c, text: `${c.text}\n\n${hint}` })),
-  };
+/**
+ * desc 是 HTML，Tower 会把白名单外的标签**整个删掉**（不是转义）。
+ * 这里在发请求前把那些标签转义成字面量，并在结果里说明转义了什么——
+ * 否则像 QA 报告里的 `<token>` 这类占位符会无声无息地消失。
+ */
+function protectDesc(desc: string | undefined): { desc: string | undefined; note: string | null } {
+  const { text, note } = protectHtmlField(desc);
+  return { desc: text, note };
 }
 
 export function registerTodoTools(server: McpServer, client: TowerClient): number {
@@ -120,7 +124,7 @@ export function registerTodoTools(server: McpServer, client: TowerClient): numbe
       inputSchema: {
         todolist_id: z.string().describe('任务清单 id'),
         content: z.string().describe('任务标题'),
-        desc: z.string().optional().describe('任务描述，支持 HTML 或纯文本'),
+        desc: z.string().optional().describe(HTML_FIELD_DESC),
         assignee_id: z
           .string()
           .optional()
@@ -138,21 +142,26 @@ export function registerTodoTools(server: McpServer, client: TowerClient): numbe
       },
       annotations: WRITE,
     },
-    ({ todolist_id, custom_fields, label_ids, assignee_id, ...rest }) =>
-      withLabelsHint(label_ids, () =>
-        callTool(() => {
-          // 不传 assignee_id 时默认指派给「当前操作人」；显式传空字符串才是「不指派」
-          const assignee = assignee_id !== undefined ? assignee_id : (currentMemberId() ?? undefined);
-          return client.post(`/todolists/${todolist_id}/todos`, {
-            todo: omitUndefined({
-              ...rest,
-              assignee_id: assignee,
-              ...(custom_fields ?? {}),
-              ...(label_ids ? { label_ids: resolveLabelRefs(label_ids) } : {}),
-            }),
-          });
-        }),
-      ),
+    ({ todolist_id, custom_fields, label_ids, assignee_id, desc, ...rest }) => {
+      const safe = protectDesc(desc);
+      return withLabelsHint(label_ids, () =>
+        withNote(safe.note, () =>
+          callTool(() => {
+            // 不传 assignee_id 时默认指派给「当前操作人」；显式传空字符串才是「不指派」
+            const assignee = assignee_id !== undefined ? assignee_id : (currentMemberId() ?? undefined);
+            return client.post(`/todolists/${todolist_id}/todos`, {
+              todo: omitUndefined({
+                ...rest,
+                desc: safe.desc,
+                assignee_id: assignee,
+                ...(custom_fields ?? {}),
+                ...(label_ids ? { label_ids: resolveLabelRefs(label_ids) } : {}),
+              }),
+            });
+          }),
+        ),
+      );
+    },
   );
 
   server.registerTool(
@@ -165,7 +174,7 @@ export function registerTodoTools(server: McpServer, client: TowerClient): numbe
       inputSchema: {
         todo_id: z.string().describe('任务 id'),
         content: z.string().optional().describe('新的任务标题'),
-        desc: z.string().optional().describe('新的任务描述，支持 HTML'),
+        desc: z.string().optional().describe(HTML_FIELD_DESC),
         assignee_id: z.string().optional().describe('新的负责人成员 id；传空字符串表示取消指派'),
         due_at: z.string().optional().describe(DUE_DESC),
         start_at: z.string().optional().describe('开始时间'),
@@ -176,18 +185,23 @@ export function registerTodoTools(server: McpServer, client: TowerClient): numbe
       },
       annotations: WRITE,
     },
-    ({ todo_id, custom_fields, label_ids, ...rest }) =>
-      withLabelsHint(label_ids, () =>
-        callTool(() =>
-          client.patch(`/todos/${todo_id}`, {
-            todo: omitUndefined({
-              ...rest,
-              ...(custom_fields ?? {}),
-              ...(label_ids ? { label_ids: resolveLabelRefs(label_ids) } : {}),
+    ({ todo_id, custom_fields, label_ids, desc, ...rest }) => {
+      const safe = protectDesc(desc);
+      return withLabelsHint(label_ids, () =>
+        withNote(safe.note, () =>
+          callTool(() =>
+            client.patch(`/todos/${todo_id}`, {
+              todo: omitUndefined({
+                ...rest,
+                desc: safe.desc,
+                ...(custom_fields ?? {}),
+                ...(label_ids ? { label_ids: resolveLabelRefs(label_ids) } : {}),
+              }),
             }),
-          }),
+          ),
         ),
-      ),
+      );
+    },
   );
 
   server.registerTool(
@@ -304,12 +318,16 @@ export function registerTodoTools(server: McpServer, client: TowerClient): numbe
         '其中 member_id 通过 tower_list_team_members 获取。',
       inputSchema: {
         todo_id: z.string().describe('任务 id'),
-        content: z.string().describe('评论内容，支持 HTML'),
+        content: z.string().describe(HTML_FIELD_DESC),
       },
       annotations: WRITE,
     },
-    ({ todo_id, content }) =>
-      callTool(() => client.post(`/todos/${todo_id}/comments`, { comment: { content } })),
+    ({ todo_id, content }) => {
+      const safe = protectHtmlField(content);
+      return withNote(safe.note, () =>
+        callTool(() => client.post(`/todos/${todo_id}/comments`, { comment: { content: safe.text } })),
+      );
+    },
   );
 
   server.registerTool(

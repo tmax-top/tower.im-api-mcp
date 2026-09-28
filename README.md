@@ -19,6 +19,7 @@
 | 删除二次确认 | 所有删除类工具强制要求 `confirm: true`，且限定为字面量 `true`，模型无法绕过——必须先取得用户明确同意 |
 | 标签可写可查 | Tower 的 API 没有标签接口，这里用「网页端同步 + 本地映射」补齐：打标签时可以直接写标签名，工具会查表转成 id |
 | 可指定操作人 | `client_id` 是管理员的、使用者是测试人员时，安装时选定一名成员作为「当前操作人」，新建任务默认指派给他、查任务默认查他 |
+| 尖括号占位符保护 | Tower 会把 HTML 白名单外的标签**整个删掉**（含 `<token>` 这类占位符）。本服务发送前自动转义成字面量，并在结果里说明 |
 
 ---
 
@@ -291,6 +292,50 @@ TOWER_MEMBER_ID=<成员id> npm run select-member   # 非交互直接指定
 
 ---
 
+## ⚠️ HTML 字段：尖括号占位符会被 Tower 删掉
+
+任务的 `desc`、讨论正文、评论都是 **HTML**。Tower 会过一遍白名单清洗，而关键在于：
+
+> **白名单之外的标签不是被转义，而是被整个删掉。**
+
+这对 QA 报告这类「复现步骤里带尖括号占位符」的内容是致命的——**写的时候看不出问题，
+存进去少一段，而且不报错**。实测：
+
+```
+发送：access_token=<token>&contactId=<MK>
+存回：access_token=&amp;contactId=          ← <token> 和 <MK> 没了
+```
+
+### Tower 的白名单（实测 40 个）
+
+```
+p br hr div span h1-h6 b strong i em big tt small sub sup del ins
+ul ol li dl dt dd blockquote pre code samp kbd var a img
+address abbr acronym cite
+```
+
+**不在这个列表里的一律会被删除**——包括 `<token>`、`<MK>` 这类占位符，以及
+`<table>`、`<video>`、`<u>`、`<mark>`、`<font>`、`<iframe>`、`<script>`。
+
+### 本服务怎么处理的
+
+**发送前自动把白名单外的标签转义成 `&lt;xxx&gt;`**，并在工具结果里说明转义了哪些
+（不搞静默修改）。因为这些标签在 Tower 那边反正会被删，转义后反而能作为字面量
+显示出来，是严格更优的结果。合法标签（`<b>`、`<i>` 等）原样保留。
+
+```
+走本服务：  access_token=&lt;token&gt;&amp;contactId=&lt;MK&gt;   ✅ 占位符保住
+绕过本服务：access_token=&amp;contactId=                        ❌ 被删
+```
+
+**所以直接写 `<token>` 是安全的。** 但如果你想用 HTML 排版，请只用上面白名单里的标签——
+用别的会被转义成字面量显示出来。
+
+> 白名单是**实测**出来的（`src/html.ts` 里的 `ALLOWED_TAGS`），不是照抄某个 sanitizer
+> 的文档。改动前请重新实测，`src/test/html.test.ts` 里有个用例会提醒你。
+
+---
+
 ## 标签
 
 Tower 的公开 API **没有任何标签接口**——`/labels`、`/teams/{id}/labels`、`/todo_labels`
@@ -559,7 +604,7 @@ confirm=true   -> 通过校验，正常执行
 ```bash
 npm run build        # 编译
 npm run watch        # 增量编译
-npm test             # 跑测试（63 个用例）
+npm test             # 跑测试（79 个用例）
 npm run print-config # 打印可直接粘贴的 MCP 配置（自动填好绝对路径）
 npm run labels:sync  # 从网页端同步标签 id 映射（需要会话 cookie，见下）
 npm run select-member # 选定/更换「当前操作人」（--clear 取消）
@@ -586,6 +631,7 @@ src/
 ├── auth-redirect.ts  授权回调方式决策（oob / 本地回调）
 ├── labels.ts         标签映射的读取与解析（名字 → id）
 ├── identity.ts       「当前操作人」的读取与解析
+├── html.ts           HTML 白名单与尖括号占位符保护
 ├── config.ts         环境变量解析
 ├── tower-client.ts   HTTP 客户端 + 令牌管理
 ├── jsonapi.ts        JSON:API 展平 + HTML 清洗

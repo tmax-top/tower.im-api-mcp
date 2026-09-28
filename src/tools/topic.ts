@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { HTML_FIELD_DESC, protectHtmlField } from '../html.js';
 import type { TowerClient } from '../tower-client.js';
 import {
   DELETE_CONFIRM,
@@ -10,6 +11,7 @@ import {
   callTool,
   omitUndefined,
   pagination,
+  withNote,
 } from './helpers.js';
 
 export function registerTopicTools(server: McpServer, client: TowerClient): number {
@@ -49,18 +51,22 @@ export function registerTopicTools(server: McpServer, client: TowerClient): numb
       inputSchema: {
         project_id: z.string().describe('项目 id'),
         subject: z.string().describe('讨论标题'),
-        content: z.string().describe('讨论正文，支持 HTML'),
+        content: z.string().describe(HTML_FIELD_DESC),
         attfile_guids: z.array(z.string()).optional().describe('已上传附件的 guid 列表'),
       },
       annotations: WRITE,
     },
-    ({ project_id, subject, content, attfile_guids }) =>
-      callTool(() =>
-        client.post(
-          `/projects/${project_id}/topics`,
-          omitUndefined({ message: { subject, content }, attfile_guids }),
+    ({ project_id, subject, content, attfile_guids }) => {
+      const safe = protectHtmlField(content);
+      return withNote(safe.note, () =>
+        callTool(() =>
+          client.post(
+            `/projects/${project_id}/topics`,
+            omitUndefined({ message: { subject, content: safe.text }, attfile_guids }),
+          ),
         ),
-      ),
+      );
+    },
   );
 
   server.registerTool(
@@ -72,18 +78,22 @@ export function registerTopicTools(server: McpServer, client: TowerClient): numb
       inputSchema: {
         topic_id: z.string().describe('讨论 id'),
         subject: z.string().optional().describe('新的讨论标题'),
-        content: z.string().optional().describe('新的讨论正文，支持 HTML'),
+        content: z.string().optional().describe(HTML_FIELD_DESC),
         attfile_guids: z.array(z.string()).optional().describe('附件 guid 列表；不传=不变，空数组=清空'),
       },
       annotations: WRITE,
     },
-    ({ topic_id, subject, content, attfile_guids }) =>
-      callTool(() =>
-        client.patch(
-          `/topics/${topic_id}`,
-          omitUndefined({ message: omitUndefined({ subject, content }), attfile_guids }),
+    ({ topic_id, subject, content, attfile_guids }) => {
+      const safe = protectHtmlField(content);
+      return withNote(safe.note, () =>
+        callTool(() =>
+          client.patch(
+            `/topics/${topic_id}`,
+            omitUndefined({ message: omitUndefined({ subject, content: safe.text }), attfile_guids }),
+          ),
         ),
-      ),
+      );
+    },
   );
 
   server.registerTool(

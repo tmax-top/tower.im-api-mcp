@@ -30,6 +30,13 @@ const INSTRUCTIONS = `Tower 项目管理工具集。Tower 的资源层级是：�
 - 翻页：has_more 为 true 时可用 next_page 作为 page 参数继续往后翻。
   has_more 恒为 false 的接口表示响应里没有分页线索，此时自行递增 page 参数尝试。
 - 任务描述(desc)、讨论正文、评论支持 HTML；读取时会被自动转成纯文本。
+- **⚠️ desc / 评论 / 讨论正文是 HTML，Tower 只认一份固定白名单，白名单外的标签会被
+  整个删掉（不是转义）**——包括 <token>、<MK> 这类占位符，以及 <table>、<u>、<mark>。
+  本服务会在发送前把这些标签自动转义成字面量，并在结果里说明转义了什么，所以写
+  <token> 是安全的。**但不要依赖它**：写 HTML 时请只用白名单标签
+  （p br hr div span h1-h6 b strong i em big tt small sub sup del ins ul ol li dl dt dd
+  blockquote pre code samp kbd var a img address abbr acronym cite）。
+  这条对导入 QA 报告尤其重要——复现步骤里的尖括号占位符最容易这样丢。
 - **删除类工具必须二次确认**：所有 tower_delete_* 工具都带一个必填的 confirm 参数，
   且只接受 true。调用前必须先在对话中向用户说明要删除的对象（名称 + id），
   得到用户明确同意后再传 confirm: true。

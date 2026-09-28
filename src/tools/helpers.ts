@@ -37,6 +37,25 @@ export function omitUndefined<T extends Record<string, unknown>>(obj: T): T {
   return out as T;
 }
 
+/**
+ * 在工具结果末尾追加一段说明。
+ *
+ * 用于「操作成功了，但有件事必须让调用方知道」的场景——比如标签映射缺失、
+ * 描述里的标签被自动转义。这类提示不能吞掉（用户会以为一切正常），
+ * 也不该报错（操作本身确实成功了）。
+ */
+export async function withNote<T extends ToolTextResult>(
+  note: string | null,
+  run: () => Promise<T>,
+): Promise<T> {
+  const result = await run();
+  if (!note) return result;
+  return {
+    ...result,
+    content: result.content.map((c) => ({ ...c, text: `${c.text}\n\n${note}` })),
+  };
+}
+
 /** 分页参数：Tower 使用 page[number] / page[size] */
 export function pagination(page?: number, size?: number): Record<string, string | number | undefined> {
   const q: Record<string, string | number | undefined> = {};
